@@ -1,0 +1,145 @@
+project:
+  city_id: philadelphia_test
+  city_label: Philadelphia
+  survey_name: DVRPC Household Travel Survey
+  survey_wave: public_release
+  timezone: America/New_York
+
+survey:
+  source_id: philadelphia_public_release
+  adapter: dvrpc_public
+  zip_path: data/raw/surveys/philadelphia/publicdb_release.zip
+  keep_complete_only: true
+
+analysis_area:
+  tract_year: 2023
+  counties:
+    - state: PA
+      county: Philadelphia
+    - state: PA
+      county: Delaware
+    - state: PA
+      county: Montgomery
+    - state: PA
+      county: Bucks
+    - state: PA
+      county: Chester
+  county_outline_year: 2023
+
+osm:
+  download_url: https://download.geofabrik.de/north-america/us/pennsylvania-latest.osm.pbf
+  local_pbf_path: data/raw/osm/philadelphia/pennsylvania-latest.osm.pbf
+
+study_periods:
+  - period_id: P1
+    period_label: 2025-08-04_to_2025-08-25
+    period_start: 2025-08-04
+    period_end: 2025-08-25
+  - period_id: P2
+    period_label: 2025-08-25_to_2025-09-08
+    period_start: 2025-08-25
+    period_end: 2025-09-08
+  - period_id: P3
+    period_label: 2025-09-08_to_2025-09-29
+    period_start: 2025-09-08
+    period_end: 2025-09-29
+
+analysis_calendar:
+  weekday_only: true
+  excluded_dates:
+    - 2025-09-01
+
+survey_filters:
+  weekday_only: true
+  allowed_travel_dow: []
+  allowed_modes: []
+  allowed_purpose_groups: []
+  transit_only: false
+  exclude_same_tract: true
+
+od_scenarios:
+  - scenario_id: peak_all
+    scenario_label: Peak, all purposes
+    weekday_only: true
+    allowed_travel_dow: []
+    transit_only: false
+    allowed_purpose_groups: []
+    allowed_mode_groups: []
+    exclude_same_tract: true
+    time_bin_rules:
+      - time_bin: peak
+        start_time: 07:30:00
+        end_time: 09:30:00
+  - scenario_id: midday_all
+    scenario_label: Midday, all purposes
+    weekday_only: true
+    allowed_travel_dow: []
+    transit_only: false
+    allowed_purpose_groups: []
+    allowed_mode_groups: []
+    exclude_same_tract: true
+    time_bin_rules:
+      - time_bin: midday
+        start_time: 11:00:00
+        end_time: 14:00:00
+
+auxiliary_weights:
+  origin_multiplier_file: null
+  origin_id_col: GEOID
+  origin_multiplier_col: multiplier
+  destination_multiplier_file: null
+  destination_id_col: GEOID
+  destination_multiplier_col: multiplier
+
+r5r_network:
+  java_memory: 12G
+  overwrite_networks: false
+  java_active_processors: 2
+
+routing:
+  modes:
+    - WALK
+    - TRANSIT
+  max_walk_time: 30
+  walk_speed: 1.3
+  max_trip_duration: 180
+  max_rides: 4
+  percentiles:
+    - 50
+  service_area_buffer_m: 2000
+  restrict_to_service_area: true
+  origin_chunk_size: 100
+  date_strategy: sample_n_dates_per_period
+  sample_n_dates_per_period: 3
+  routing_windows:
+    - time_window_id: peak
+      time_window_label: Peak
+      od_scenario_id: peak_all
+      start_time: 07:30:00
+      end_time: 09:30:00
+    - time_window_id: midday
+      time_window_label: Midday
+      od_scenario_id: midday_all
+      start_time: 11:00:00
+      end_time: 14:00:00
+  unreachable_penalty_minutes: 180
+
+map:
+  default_comparison_id: P3_vs_P1
+  default_time_window_id: peak
+
+# Replace with SEPTA or custom local feeds.
+gtfs_feeds:
+  - feed_name: SEPTA_before
+    valid_start: 2025-08-01
+    valid_end: 2025-08-31
+    gtfs_files:
+      - data/raw/gtfs/philadelphia/restore.zip
+  - feed_name: SEPTA_after
+    valid_start: 2025-09-01
+    valid_end: 2025-09-30
+    gtfs_files:
+      - data/raw/gtfs/philadelphia/cut.zip
+
+run_management:
+  run_label: null

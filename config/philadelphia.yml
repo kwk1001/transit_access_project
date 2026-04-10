@@ -1,0 +1,175 @@
+project:
+  city_id: philadelphia
+  city_label: Philadelphia
+  survey_name: DVRPC HTS
+  survey_wave: public_release
+  timezone: America/New_York
+
+survey:
+  source_id: philadelphia_public_release
+  adapter: dvrpc_public
+  zip_path: data/raw/surveys/philadelphia/publicdb_release.zip
+  keep_complete_only: true
+
+analysis_area:
+  tract_year: 2023
+  county_outline_year: 2023
+  counties:
+    - state: PA
+      county: Philadelphia
+    - state: PA
+      county: Delaware
+    - state: PA
+      county: Montgomery
+    - state: PA
+      county: Bucks
+    - state: PA
+      county: Chester
+
+osm:
+  download_url: https://download.geofabrik.de/north-america/us/pennsylvania-latest.osm.pbf
+  local_pbf_path: data/raw/osm/philadelphia/pennsylvania-latest.osm.pbf
+
+study_periods:
+  - period_id: P1
+    period_label: 2025-08-04_to_2025-08-23
+    period_start: 2025-08-04
+    period_end_exclusive: 2025-08-24
+  - period_id: P2
+    period_label: 2025-08-25_to_2025-09-13
+    period_start: 2025-08-25
+    period_end_exclusive: 2025-09-14
+  - period_id: P3
+    period_label: 2025-09-14_to_2025-09-28
+    period_start: 2025-09-14
+    period_end_exclusive: 2025-09-29
+
+analysis_calendar:
+  weekday_only: true
+  excluded_dates:
+    - 2025-09-01
+
+od_scenarios:
+  - scenario_id: peak
+    scenario_label: Peak, all purposes
+    weekday_only: true
+    allowed_travel_dow: []
+    transit_only: false
+    allowed_purpose_groups: []
+    allowed_mode_groups: []
+    exclude_same_tract: true
+    time_bin_rules:
+      - time_bin: peak
+        start_time: 07:30:00
+        end_time: 09:30:00
+  - scenario_id: midday
+    scenario_label: Midday, all purposes
+    weekday_only: true
+    allowed_travel_dow: []
+    transit_only: false
+    allowed_purpose_groups: []
+    allowed_mode_groups: []
+    exclude_same_tract: true
+    time_bin_rules:
+      - time_bin: midday
+        start_time: 11:00:00
+        end_time: 14:00:00
+  # - scenario_id: custom
+  #   scenario_label: Custom example window, all purposes
+  #   weekday_only: true
+  #   allowed_travel_dow: []
+  #   transit_only: false
+  #   allowed_purpose_groups: []
+  #   allowed_mode_groups: []
+  #   exclude_same_tract: true
+  #   time_bin_rules:
+  #     - time_bin: custom
+  #       start_time: 06:00:00
+  #       end_time: 22:00:00
+
+auxiliary_weights:
+  origin_multiplier_file: null
+  origin_id_col: GEOID
+  origin_multiplier_col: multiplier
+  destination_multiplier_file: null
+  destination_id_col: GEOID
+  destination_multiplier_col: multiplier
+
+r5r_network:
+  java_memory: 16G
+  overwrite_networks: false
+  java_active_processors: 4
+
+routing:
+  modes:
+    - WALK
+    - TRANSIT
+  max_walk_time: 30
+  walk_speed: 4.68
+  max_trip_duration: 180
+  max_rides: 4
+  max_lts: 2
+  percentiles:
+    - 50
+  service_area_buffer_m: 2000
+  restrict_to_service_area: true
+  origin_chunk_size: 50
+  date_strategy: sample_n_dates_per_period
+  sample_n_dates_per_period: 3
+  n_threads: 4
+  unreachable_penalty_minutes: 180
+  routing_windows:
+    - time_window_id: peak
+      time_window_label: Peak
+      od_scenario_id: peak
+      start_time: 07:30:00
+      end_time: 09:30:00
+    - time_window_id: midday
+      time_window_label: Midday
+      od_scenario_id: midday
+      start_time: 11:00:00
+      end_time: 14:00:00
+    # - time_window_id: custom
+    #   time_window_label: Custom example window
+    #   od_scenario_id: custom
+    #   start_time: 22:00:00
+    #   end_time: 22:01:00
+
+map:
+  default_comparison_id: P2_vs_P1
+  default_time_window_id: peak
+  od_top_pairs_max: 500
+  od_top_pairs_default: 100
+  comparison_metrics:
+    - delta_avg_weighted_travel_time_penalized
+    - delta_pct_weighted_travel_time_penalized
+    - delta_unreachable_share_weighted
+    - share_weight_increase_gt_10
+    - share_weight_becomes_unreachable
+  period_metrics:
+    - avg_weighted_travel_time_penalized
+    - share_unreachable_weighted
+    - share_accessible_45min_weighted
+
+gtfs_feeds:
+  - feed_name: SEPTA_0806
+    valid_start: 2025-08-04
+    valid_end_exclusive: 2025-08-25
+    gtfs_files:
+      - data/raw/gtfs/philadelphia/SEPTA-08-06.zip
+  - feed_name: SEPTA_0825
+    valid_start: 2025-08-25
+    valid_end_exclusive: 2025-09-14
+    gtfs_files:
+      - data/raw/gtfs/philadelphia/SEPTA-08-25.zip
+  - feed_name: SEPTA_0912
+    valid_start: 2025-09-14
+    valid_end_exclusive: 2025-10-31
+    gtfs_files:
+      - data/raw/gtfs/philadelphia/SEPTA-09-12.zip
+
+optional_covariates:
+  download_population: false
+
+run_management:
+  run_label: null

@@ -109,6 +109,19 @@ format_popup_table <- function(df, popup_cols) {
   })
 }
 
+is_valid_zone_id_for_unit <- function(zone_id, unit) {
+  zone_chr <- as.character(zone_id)
+  if (length(zone_chr) == 0) return(logical())
+  unit_use <- tolower(as.character(unit %||% "tract"))
+  if (unit_use %in% c("zip", "zipcode", "zcta")) {
+    return(!is.na(zone_chr) & stringr::str_detect(zone_chr, "^\\d{5}$"))
+  }
+  if (unit_use %in% c("tract", "census_tract")) {
+    return(!is.na(zone_chr) & stringr::str_detect(zone_chr, "^\\d{11}$"))
+  }
+  !is.na(zone_chr) & nzchar(zone_chr)
+}
+
 build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, popup_cols, output_path, default_group = NULL) {
   group_values <- sf_obj %>% sf::st_drop_geometry() %>% dplyr::pull(.data[[group_col]]) %>% unique() %>% sort()
   if (length(group_values) == 0) return(invisible(NULL))
@@ -143,6 +156,7 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
         values = global_values,
         title = metric_label(metric_col),
         position = "bottomright",
+        na.label = "No data",
         group = grp
       )
   }
@@ -182,7 +196,12 @@ build_od_lines_sf <- function(top_pairs_df, zone_centroids_sf, zones_sf, max_pai
   tract_names <- zones_sf %>% sf::st_drop_geometry() %>% transmute(tract_id = as.character(zone_id), tract_name = as.character(zone_name))
 
   top_use <- top_pairs_df %>%
-    mutate(origin_id = as.character(origin_id), destination_id = as.character(destination_id)) %>%
+    mutate(
+      origin_id = as.character(origin_id),
+      destination_id = as.character(destination_id),
+      scenario_id = as.character(scenario_id)
+    ) %>%
+    filter(!is.na(scenario_id), nzchar(scenario_id)) %>%
     mutate(weight_use = dplyr::coalesce(weight_sum_adjusted, weight_sum)) %>%
     group_by(scenario_id) %>%
     arrange(desc(weight_use), .by_group = TRUE) %>%
@@ -442,7 +461,27 @@ make_all_interactive_maps <- function(cfg) {
 
   index_entries <- tibble(file = character(), title = character(), description = character(), section = character())
 
-  metrics_sf <- metrics_sf %>% mutate(layer_group = paste0(time_window_id, " | ", period_id, " | ", scenario_id))
+  valid_zone_ids <- analysis_zones %>%
+    sf::st_drop_geometry() %>%
+    transmute(origin_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
+    pull(origin_id) %>%
+    unique()
+
+  metrics_sf <- metrics_sf %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      scenario_id = as.character(scenario_id),
+      time_window_id = as.character(time_window_id),
+      period_id = as.character(period_id)
+    ) %>%
+    filter(
+      origin_id %in% valid_zone_ids,
+      is_valid_zone_id_for_unit(origin_id, cfg$geography$analysis_unit),
+      !is.na(scenario_id),
+      !is.na(time_window_id),
+      !is.na(period_id)
+    ) %>%
+    mutate(layer_group = paste0(time_window_id, " | ", period_id, " | ", scenario_id))
   default_period <- metrics_sf %>% sf::st_drop_geometry() %>% dplyr::filter(time_window_id == (cfg$map$default_time_window_id %||% first(time_window_id))) %>% dplyr::slice(1) %>% dplyr::pull(layer_group)
   if (length(default_period) == 0) default_period <- metrics_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(layer_group)
 
@@ -461,7 +500,21 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility level maps"))
   }
 
-  comparisons_sf <- comparisons_sf %>% mutate(layer_group = paste0(time_window_id, " | ", comparison_id, " | ", scenario_id))
+  comparisons_sf <- comparisons_sf %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      scenario_id = as.character(scenario_id),
+      time_window_id = as.character(time_window_id),
+      comparison_id = as.character(comparison_id)
+    ) %>%
+    filter(
+      origin_id %in% valid_zone_ids,
+      is_valid_zone_id_for_unit(origin_id, cfg$geography$analysis_unit),
+      !is.na(scenario_id),
+      !is.na(time_window_id),
+      !is.na(comparison_id)
+    ) %>%
+    mutate(layer_group = paste0(time_window_id, " | ", comparison_id, " | ", scenario_id))
   default_comparison_id <- cfg$map$default_comparison_id %||% (comparisons_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(comparison_id))
   default_compare <- comparisons_sf %>% sf::st_drop_geometry() %>% dplyr::filter(comparison_id == default_comparison_id, time_window_id == (cfg$map$default_time_window_id %||% first(time_window_id))) %>% dplyr::slice(1) %>% dplyr::pull(layer_group)
   if (length(default_compare) == 0) default_compare <- comparisons_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(layer_group)
@@ -481,8 +534,28 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility change maps"))
   }
 
-  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight") %>% mutate(layer_group = scenario_id)
-  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight") %>% mutate(layer_group = scenario_id)
+  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight") %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      scenario_id = as.character(scenario_id)
+    ) %>%
+    filter(
+      origin_id %in% valid_zone_ids,
+      is_valid_zone_id_for_unit(origin_id, cfg$geography$analysis_unit),
+      !is.na(scenario_id)
+    ) %>%
+    mutate(layer_group = scenario_id)
+  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight") %>%
+    mutate(
+      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
+      scenario_id = as.character(scenario_id)
+    ) %>%
+    filter(
+      destination_id %in% valid_zone_ids,
+      is_valid_zone_id_for_unit(destination_id, cfg$geography$analysis_unit),
+      !is.na(scenario_id)
+    ) %>%
+    mutate(layer_group = scenario_id)
   default_od_group <- cfg$map$default_time_window_id %||% (origin_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(layer_group))
   if (!default_od_group %in% unique(origin_sf$layer_group)) default_od_group <- origin_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(layer_group)
 

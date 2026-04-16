@@ -83,7 +83,7 @@ run_download_optional_covariates <- function(cfg) {
 
 run_standardize_surveys <- function(cfg, source_ids = NULL) {
   source_id_use <- source_ids %||% cfg$active_survey_source_id
-  cfg2 <- load_project_config(cfg$project$config_path, source_id_use)
+  cfg2 <- if (identical(source_id_use, cfg$active_survey_source_id)) cfg else load_project_config(cfg$project$config_path, source_id_use)
   ensure_project_dirs(cfg2)
   write_run_metadata(cfg2)
 
@@ -100,7 +100,8 @@ run_standardize_surveys <- function(cfg, source_ids = NULL) {
 }
 
 run_build_od_weights <- function(cfg, source_id = NULL) {
-  cfg2 <- load_project_config(cfg$project$config_path, source_id %||% cfg$active_survey_source_id)
+  source_id_use <- source_id %||% cfg$active_survey_source_id
+  cfg2 <- if (identical(source_id_use, cfg$active_survey_source_id)) cfg else load_project_config(cfg$project$config_path, source_id_use)
   ensure_project_dirs(cfg2)
   write_run_metadata(cfg2)
 

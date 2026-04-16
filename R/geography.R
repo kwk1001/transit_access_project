@@ -33,6 +33,16 @@ lookup_county_fips_exact <- function(state, county_name, year) {
 }
 
 read_geography_outputs <- function(cfg) {
+  core_files <- c(
+    file.path(cfg$paths$geography_dir, "tracts.gpkg"),
+    file.path(cfg$paths$geography_dir, "tract_centroids.gpkg"),
+    file.path(cfg$paths$geography_dir, "county_outlines.gpkg")
+  )
+  if (!all_files_nonempty(core_files, min_bytes = 100)) {
+    message("Geography files are missing for unit `", cfg$geography$analysis_unit, "`. Rebuilding geography outputs automatically.")
+    download_county_tract_geography(cfg)
+  }
+
   tracts <- sf::st_read(file.path(cfg$paths$geography_dir, "tracts.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("GEOID"))
   tract_centroids <- sf::st_read(file.path(cfg$paths$geography_dir, "tract_centroids.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("tract_id"))
   county_outlines <- sf::st_read(file.path(cfg$paths$geography_dir, "county_outlines.gpkg"), quiet = TRUE)

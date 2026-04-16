@@ -28,7 +28,7 @@ standardize_geoid11 <- function(x) {
 }
 
 standardize_zone_id <- function(x, unit = "tract") {
-  unit_use <- tolower(as.character(unit %||% "tract"))
+  unit_use <- normalize_analysis_unit(unit)
   x_chr <- as.character(x)
   x_chr <- trimws(x_chr)
   x_chr[x_chr == ""] <- NA_character_
@@ -44,6 +44,17 @@ standardize_zone_id <- function(x, unit = "tract") {
   }
 
   x_chr
+}
+
+normalize_analysis_unit <- function(unit) {
+  unit_chr <- tolower(trimws(as.character(unit %||% "tract")))
+  unit_chr <- stringr::str_replace_all(unit_chr, "[-\\s]+", "_")
+  dplyr::case_when(
+    unit_chr %in% c("tract", "census_tract") ~ "tract",
+    unit_chr %in% c("zip", "zipcode", "zip_code", "zcta") ~ "zip",
+    unit_chr == "taz" ~ "taz",
+    TRUE ~ unit_chr
+  )
 }
 
 standardize_tract_id_cols <- function(df, cols = c("GEOID", "tract_id", "origin_id", "destination_id", "from_id", "to_id", "origin_tract", "destination_tract", "home_tract", "work_tract", "school_tract")) {

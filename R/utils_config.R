@@ -205,7 +205,7 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       taz_name_col = cfg_yaml$analysis_area$taz_name_col %||% NULL
     ),
     geography = list(
-      analysis_unit = tolower(cfg_yaml$geography$analysis_unit %||% "tract"),
+      analysis_unit = normalize_analysis_unit(cfg_yaml$geography$analysis_unit %||% "tract"),
       service_buffer_m = cfg_yaml$routing$service_area_buffer_m %||% 2000,
       restrict_to_gtfs_service_area = isTRUE(cfg_yaml$routing$restrict_to_service_area)
     ),
@@ -277,7 +277,7 @@ normalize_list_config <- function(cfg_raw, config_path) {
       taz_name_col = cfg_raw$analysis_area$taz_name_col %||% NULL
     ),
     geography = list(
-      analysis_unit = tolower(cfg_raw$geography$analysis_unit %||% "tract"),
+      analysis_unit = normalize_analysis_unit(cfg_raw$geography$analysis_unit %||% "tract"),
       service_buffer_m = cfg_raw$geography$service_buffer_m,
       restrict_to_gtfs_service_area = isTRUE(cfg_raw$geography$restrict_to_gtfs_service_area)
     ),
@@ -412,7 +412,7 @@ compute_analysis_signature <- function(cfg) {
 build_project_paths <- function(cfg, source_id, run_id) {
   project_root <- project_root_from_config(cfg$project$config_path)
   city_id <- cfg$project$city_id
-  unit_id <- cfg$geography$analysis_unit %||% "tract"
+  unit_id <- normalize_analysis_unit(cfg$geography$analysis_unit %||% "tract")
   run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, unit_id, run_id)
   list(
     project_root = project_root,
@@ -430,7 +430,7 @@ build_project_paths <- function(cfg, source_id, run_id) {
     travel_time_dir = file.path(run_root, "travel_times"),
     accessibility_dir = file.path(run_root, "accessibility"),
     metadata_dir = file.path(run_root, "metadata"),
-    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, unit_id, run_id),
+    maps_dir = file.path(project_root, "outputs", city_id, "maps", unit_id),
     logs_dir = file.path(project_root, "logs", city_id, source_id, unit_id, run_id)
   )
 }
@@ -509,7 +509,7 @@ apply_runtime_overrides <- function(cfg, overrides = list()) {
   if (length(overrides) == 0) return(cfg)
 
   if (!is.null(overrides$analysis_unit)) {
-    cfg$geography$analysis_unit <- tolower(as.character(overrides$analysis_unit))
+    cfg$geography$analysis_unit <- normalize_analysis_unit(overrides$analysis_unit)
   }
   if (!is.null(overrides$run_label)) {
     cfg$run_management$run_label <- as.character(overrides$run_label)

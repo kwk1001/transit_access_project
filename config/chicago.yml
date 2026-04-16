@@ -14,6 +14,7 @@ survey:
 analysis_area:
   tract_year: 2023
   county_outline_year: 2023
+  zip_zcta_year: 2020
   counties:
     - state: IL
       county: Cook
@@ -29,6 +30,9 @@ analysis_area:
       county: McHenry
     - state: IL
       county: Will
+
+geography:
+  analysis_unit: tract
 
 osm:
   download_url: https://download.geofabrik.de/north-america/us/illinois-latest.osm.pbf
@@ -101,9 +105,9 @@ auxiliary_weights:
   destination_multiplier_col: multiplier
 
 r5r_network:
-  java_memory: 16G
+  java_memory: 12G
   overwrite_networks: false
-  java_active_processors: 4
+  java_active_processors: 6
 
 routing:
   modes:
@@ -121,7 +125,7 @@ routing:
   origin_chunk_size: 50
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 4
+  n_threads: 6
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak

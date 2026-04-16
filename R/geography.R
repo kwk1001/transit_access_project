@@ -106,23 +106,13 @@ build_analysis_zones <- function(cfg, tracts_sf) {
     tract_match <- sf::st_join(tract_pts, zcta_all, left = TRUE, join = sf::st_within) %>%
       sf::st_drop_geometry() %>%
       dplyr::select(tract_id, zone_id)
-    tract_match$zone_id[is.na(tract_match$zone_id)] <- tract_match$tract_id[is.na(tract_match$zone_id)]
+    if (any(is.na(tract_match$zone_id))) {
+      idx_missing <- which(is.na(tract_match$zone_id))
+      nearest_idx <- sf::st_nearest_feature(tract_pts[idx_missing, , drop = FALSE], zcta_all)
+      tract_match$zone_id[idx_missing] <- zcta_all$zone_id[nearest_idx]
+    }
 
-    fallback_tract_zones <- tracts_sf %>%
-      dplyr::transmute(
-        tract_id = GEOID,
-        zone_id = GEOID,
-        zone_name = paste0("TRACT ", GEOID),
-        geometry
-      ) %>%
-      dplyr::semi_join(tract_match %>% dplyr::filter(zone_id == tract_id), by = "tract_id") %>%
-      dplyr::select(zone_id, zone_name, geometry)
-
-    zones <- dplyr::bind_rows(
-      zcta_all %>% dplyr::filter(zone_id %in% unique(tract_match$zone_id)),
-      fallback_tract_zones
-    ) %>%
-      dplyr::distinct(zone_id, .keep_all = TRUE)
+    zones <- zcta_all %>% dplyr::filter(zone_id %in% unique(tract_match$zone_id))
     return(list(zones = zones, crosswalk = tract_match))
   }
 

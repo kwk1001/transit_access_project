@@ -13,7 +13,7 @@
 1. Copy `config/template_city.yml`.
 2. Add one adapter in `R/adapters_<city>.R`.
 3. Register the adapter name in `R/utils_survey_common.R`.
-4. Add a city specific wrapper script only if you want a one click entry point. The generic engine is `scripts/08_run_pipeline.R`.
+4. Use the single main entry script `scripts/09_run_pipeline_main.R` and switch city/unit via parameters.
 
 ## Errors fixed in this unified package
 

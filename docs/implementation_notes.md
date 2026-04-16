@@ -5,7 +5,7 @@
 The primary path is:
 
 1. `config/chicago_cmap_phase1.yml`
-2. `scripts/run_pipeline.R`
+2. `scripts/09_run_pipeline_main.R`
 
 This path assumes:
 

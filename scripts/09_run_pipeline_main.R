@@ -18,6 +18,16 @@ pipeline_main <- list(
   run_label = NULL,
   force_all = FALSE
 )
+
+# Optional CLI override:
+# Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all]
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) >= 1 && nzchar(args[[1]])) pipeline_main$config_path <- args[[1]]
+if (length(args) >= 2 && nzchar(args[[2]])) pipeline_main$source_id <- args[[2]]
+if (length(args) >= 3 && nzchar(args[[3]])) pipeline_main$analysis_unit <- tolower(args[[3]])
+if (length(args) >= 4 && nzchar(args[[4]])) pipeline_main$run_label <- args[[4]]
+if (length(args) >= 5 && nzchar(args[[5]])) pipeline_main$force_all <- tolower(args[[5]]) %in% c("1", "true", "t", "yes", "y")
+
 if (!fs::is_absolute_path(pipeline_main$config_path)) {
   pipeline_main$config_path <- normalizePath(file.path(project_root, pipeline_main$config_path), winslash = "/", mustWork = FALSE)
 }
@@ -34,9 +44,6 @@ cfg <- apply_runtime_overrides(cfg, pipeline_main[c("analysis_unit", "run_label"
 on.exit({
   try(cleanup_empty_run_dirs(cfg), silent = TRUE)
 }, add = TRUE)
-
-ensure_project_dirs(cfg)
-write_run_metadata(cfg)
 
 run_download_geography(cfg)
 run_download_optional_covariates(cfg)

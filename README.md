@@ -1,5 +1,11 @@
 # Transit accessibility workflow project
 
+## Documentation
+
+- Main operations and parameter manual: `docs/project_manual.md`
+- Architecture and known fixes: `docs/architecture_and_known_fixes.md`
+- Implementation notes: `docs/implementation_notes.md`
+
 This project is an end to end R workflow for tract level transit accessibility analysis using:
 
 1. local household travel survey data to build tract to tract OD weights
@@ -65,7 +71,7 @@ transit_access_project/
   outputs/
 ```
 
-The project writes reusable survey standardization outputs into `data/processed/<city_id>/survey/<source_id>/`. All analysis outputs that depend on parameters are written into a run specific folder keyed by a parameter signature, plus an optional run label. Maps are written into `outputs/<city_id>/maps/<source_id>/<run_id>/`.
+The project writes reusable survey standardization outputs into `data/processed/<city_id>/survey/<source_id>/`. All analysis outputs that depend on parameters are written into a run specific folder keyed by a parameter signature, plus an optional run label and analysis unit. Maps are written into `outputs/<city_id>/maps/<source_id>/<analysis_unit>/<run_id>/`.
 
 ## Before you run
 
@@ -121,16 +127,23 @@ Rscript scripts/06_aggregate_metrics.R config/chicago.yml cmap_2024_2025_phase1
 Rscript scripts/07_make_interactive_maps.R config/chicago.yml cmap_2024_2025_phase1
 ```
 
-Or run the full sequence:
+Or run the full sequence with the single main entry script:
 
 ```bash
-Rscript scripts/08_run_pipeline.R config/chicago.yml cmap_2024_2025_phase1
+Rscript scripts/09_run_pipeline_main.R config/chicago.yml cmap_2024_2025_phase1 tract chicago_run false
 ```
 
-You can also use the YAML configs:
+Main script CLI arguments:
+
+```text
+Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all]
+```
+
+Examples:
 
 ```bash
-Rscript scripts/08_run_pipeline.R config/chicago.yml
+Rscript scripts/09_run_pipeline_main.R config/chicago.yml cmap_2024_2025_phase1 zip chicago_zip_test false
+Rscript scripts/09_run_pipeline_main.R config/philadelphia.yml philadelphia_public_release tract philly_tract true
 ```
 
 ## Core outputs
@@ -147,7 +160,7 @@ Rscript scripts/08_run_pipeline.R config/chicago.yml
 
 ### OD weights
 
-`data/processed/<city_id>/runs/<source_id>/<run_id>/od/`
+`data/processed/<city_id>/runs/<source_id>/<analysis_unit>/<run_id>/od/`
 
 - `od_weights_all.csv.gz`
 - `od_marginals_origin.csv`
@@ -156,7 +169,7 @@ Rscript scripts/08_run_pipeline.R config/chicago.yml
 
 ### GTFS supply summaries
 
-`data/processed/<city_id>/runs/<source_id>/<run_id>/gtfs_supply/`
+`data/processed/<city_id>/runs/<source_id>/<analysis_unit>/<run_id>/gtfs_supply/`
 
 - `analysis_dates_used.csv`
 - `route_frequency_day_summary.csv`
@@ -167,14 +180,14 @@ Rscript scripts/08_run_pipeline.R config/chicago.yml
 
 ### Routing outputs
 
-`data/processed/<city_id>/runs/<source_id>/<run_id>/travel_times/`
+`data/processed/<city_id>/runs/<source_id>/<analysis_unit>/<run_id>/travel_times/`
 
 - daily chunk files in `daily/`
 - `period_travel_times.csv.gz`
 
 ### Accessibility metrics
 
-`data/processed/<city_id>/runs/<source_id>/<run_id>/accessibility/`
+`data/processed/<city_id>/runs/<source_id>/<analysis_unit>/<run_id>/accessibility/`
 
 - `tract_period_metrics.csv`
 - `tract_period_comparisons.csv`
@@ -183,7 +196,7 @@ Rscript scripts/08_run_pipeline.R config/chicago.yml
 
 ### Maps
 
-`outputs/<city_id>/maps/<source_id>/<run_id>/`
+`outputs/<city_id>/maps/<source_id>/<analysis_unit>/<run_id>/`
 
 - one HTML file per metric
 - `index.html` linking to all generated maps
@@ -216,23 +229,12 @@ The bootstrap script now sets `options(java.parameters=...)` before loading `r5r
 
 ## Quick start
 
-Chicago:
+Single main entry point (recommended):
 
 ```bash
-Rscript scripts/run_chicago.R
+Rscript scripts/09_run_pipeline_main.R config/chicago.yml cmap_2024_2025_phase1 tract chicago_tract false
+Rscript scripts/09_run_pipeline_main.R config/chicago.yml cmap_2024_2025_phase1 zip chicago_zip false
+Rscript scripts/09_run_pipeline_main.R config/philadelphia.yml philadelphia_public_release tract philly_tract false
 ```
 
-Philadelphia:
-
-```bash
-Rscript scripts/run_philadelphia.R
-```
-
-Generic entry point:
-
-```bash
-Rscript scripts/08_run_pipeline.R config/chicago.yml cmap_2024_2025_phase1
-Rscript scripts/08_run_pipeline.R config/philadelphia.yml philadelphia_public_release
-```
-
-Results that depend on analysis parameters are written to a run specific folder under `data/processed/<city>/runs/<source_id>/<run_id>/` and matching map folders under `outputs/<city>/maps/<source_id>/<run_id>/`. Shared assets such as base geography, OSM downloads, standardized survey tables, and cached R5 networks are reused when still valid.
+Results that depend on analysis parameters are written to a run specific folder under `data/processed/<city>/runs/<source_id>/<analysis_unit>/<run_id>/` and matching map folders under `outputs/<city>/maps/<source_id>/<analysis_unit>/<run_id>/`. Shared assets such as base geography, OSM downloads, standardized survey tables, and cached R5 networks are reused when still valid.

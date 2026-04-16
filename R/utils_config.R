@@ -412,7 +412,8 @@ compute_analysis_signature <- function(cfg) {
 build_project_paths <- function(cfg, source_id, run_id) {
   project_root <- project_root_from_config(cfg$project$config_path)
   city_id <- cfg$project$city_id
-  run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, run_id)
+  unit_id <- cfg$geography$analysis_unit %||% "tract"
+  run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, unit_id, run_id)
   list(
     project_root = project_root,
     run_id = run_id,
@@ -429,8 +430,8 @@ build_project_paths <- function(cfg, source_id, run_id) {
     travel_time_dir = file.path(run_root, "travel_times"),
     accessibility_dir = file.path(run_root, "accessibility"),
     metadata_dir = file.path(run_root, "metadata"),
-    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, run_id),
-    logs_dir = file.path(project_root, "logs", city_id, source_id, run_id)
+    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, unit_id, run_id),
+    logs_dir = file.path(project_root, "logs", city_id, source_id, unit_id, run_id)
   )
 }
 
@@ -465,7 +466,7 @@ load_project_config <- function(config_path, source_id = NULL) {
   sig_short <- substr(sig$analysis_signature, 1, 12)
   run_label <- sanitize_path_component(cfg$run_management$run_label %||% "")
   unit_label <- sanitize_path_component(cfg$geography$analysis_unit %||% "tract")
-  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", sig_short) else paste0("analysis_", unit_label, "__", sig_short)
+  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", unit_label, "__", sig_short) else paste0(unit_label, "__", sig_short)
 
   cfg$run <- list(
     run_label = if (run_label == "item") "" else run_label,
@@ -521,7 +522,7 @@ apply_runtime_overrides <- function(cfg, overrides = list()) {
   sig_short <- substr(sig$analysis_signature, 1, 12)
   run_label <- sanitize_path_component(cfg$run_management$run_label %||% "")
   unit_label <- sanitize_path_component(cfg$geography$analysis_unit %||% "tract")
-  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", sig_short) else paste0("analysis_", unit_label, "__", sig_short)
+  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", unit_label, "__", sig_short) else paste0(unit_label, "__", sig_short)
 
   cfg$run <- list(
     run_label = if (run_label == "item") "" else run_label,

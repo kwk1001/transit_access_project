@@ -390,7 +390,7 @@ write_run_metadata <- function(cfg) {
     executed_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
     config_path = cfg$project$config_path
   )
-  stamp_path <- file.path(cfg$paths$logs_dir, paste0("execution_", format(Sys.time(), "%Y%m%dT%H%M%SZ", tz = "UTC"), ".csv"))
+  stamp_path <- file.path(cfg$paths$logs_dir, "execution_latest.csv")
   readr::write_csv(execution_stamp, stamp_path)
 
   invisible(manifest)

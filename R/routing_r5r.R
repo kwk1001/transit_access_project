@@ -159,6 +159,7 @@ get_active_geography_for_routing <- function(cfg) {
     ))
   }
 
+  base <- read_geography_outputs(cfg)
   list(
     tracts = base$tracts,
     tract_centroids = base$tract_centroids,

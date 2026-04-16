@@ -186,7 +186,32 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
   invisible(map_obj)
 }
 
-build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col) {
+build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col, unit = "tract") {
+  if (!id_col %in% names(marginals_df)) {
+    fallback_candidates <- c(
+      "zone_id",
+      "GEOID",
+      "geoid",
+      "tract_id",
+      if (id_col == "origin_id") c("origin", "from_id") else character(),
+      if (id_col == "destination_id") c("destination", "to_id") else character()
+    )
+    fallback_col <- dplyr::first(intersect(fallback_candidates, names(marginals_df)))
+    if (is.null(fallback_col) || !nzchar(fallback_col)) {
+      stop(
+        paste0(
+          "OD marginal data is missing `", id_col,
+          "`. Expected `", id_col,
+          "` or one of: ", paste(fallback_candidates, collapse = ", "), "."
+        ),
+        call. = FALSE
+      )
+    }
+    marginals_df <- marginals_df %>% dplyr::mutate(!!id_col := .data[[fallback_col]])
+  }
+
+  marginals_df <- marginals_df %>% dplyr::mutate(!!id_col := standardize_zone_id(.data[[id_col]], unit))
+
   tracts_sf %>%
     left_join(marginals_df, by = setNames(id_col, "GEOID")) %>%
     mutate(
@@ -545,7 +570,7 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility change maps"))
   }
 
-  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight") %>%
+  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
       origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)
@@ -556,7 +581,7 @@ make_all_interactive_maps <- function(cfg) {
       !is.na(scenario_id)
     ) %>%
     mutate(layer_group = scenario_id)
-  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight") %>%
+  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
       destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)

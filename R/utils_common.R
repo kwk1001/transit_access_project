@@ -212,7 +212,16 @@ write_json_pretty <- function(x, path) {
 }
 
 add_period_comparison_ids <- function(period_ids) {
-  utils::combn(period_ids, 2, simplify = FALSE) %>%
+  period_ids_use <- period_ids %>%
+    as.character() %>%
+    trimws()
+  period_ids_use <- period_ids_use[!is.na(period_ids_use) & nzchar(period_ids_use) & tolower(period_ids_use) != "na"] %>% unique()
+
+  if (length(period_ids_use) < 2) {
+    return(tibble::tibble(base_period_id = character(), compare_period_id = character(), comparison_id = character()))
+  }
+
+  utils::combn(period_ids_use, 2, simplify = FALSE) %>%
     purrr::map_dfr(~ tibble(
       base_period_id = .x[[1]],
       compare_period_id = .x[[2]],

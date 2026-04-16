@@ -27,6 +27,12 @@ compute_period_metrics <- function(cfg) {
       travel_time_penalized = dplyr::coalesce(travel_time_p50_penalized, cfg$routing$unreachable_penalty_minutes),
       weight_for_metrics = dplyr::coalesce(weight_sum_adjusted, weight_sum),
       reachable_weight_equiv = weight_for_metrics * (1 - pair_share_days_unreachable)
+    ) %>%
+    filter(
+      !is.na(period_id),
+      nzchar(period_id),
+      !is.na(time_bin),
+      nzchar(time_bin)
     )
 
   tract_period_metrics <- od_joined %>%

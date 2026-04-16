@@ -430,7 +430,7 @@ build_project_paths <- function(cfg, source_id, run_id) {
     travel_time_dir = file.path(run_root, "travel_times"),
     accessibility_dir = file.path(run_root, "accessibility"),
     metadata_dir = file.path(run_root, "metadata"),
-    maps_dir = file.path(project_root, "outputs", city_id, "maps", unit_id),
+    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, unit_id, run_id),
     logs_dir = file.path(project_root, "logs", city_id, source_id, unit_id, run_id)
   )
 }
@@ -438,7 +438,8 @@ build_project_paths <- function(cfg, source_id, run_id) {
 ensure_project_dirs <- function(cfg) {
   dir_paths <- cfg$paths
   dir_paths$raw_osm_dir <- NULL
-  purrr::walk(unlist(dir_paths, use.names = FALSE), fs::dir_create)
+  dir_paths <- dir_paths[stringr::str_detect(names(dir_paths), "(_dir|_root)$")]
+  purrr::walk(unique(unlist(dir_paths, use.names = FALSE)), fs::dir_create)
   invisible(cfg)
 }
 

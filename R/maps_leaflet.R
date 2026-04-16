@@ -549,7 +549,9 @@ make_all_interactive_maps <- function(cfg) {
       is_valid_zone_id_for_unit(origin_id, cfg$geography$analysis_unit),
       !is.na(scenario_id),
       !is.na(time_window_id),
-      !is.na(comparison_id)
+      !is.na(comparison_id),
+      nzchar(comparison_id),
+      !stringr::str_detect(comparison_id, "(^NA_vs_|_vs_NA$)")
     ) %>%
     mutate(layer_group = paste0(time_window_id, " | ", comparison_id, " | ", scenario_id))
   default_comparison_id <- cfg$map$default_comparison_id %||% (comparisons_sf %>% sf::st_drop_geometry() %>% dplyr::slice(1) %>% dplyr::pull(comparison_id))

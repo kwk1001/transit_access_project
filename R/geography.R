@@ -38,14 +38,7 @@ read_geography_outputs <- function(cfg) {
     file.path(cfg$paths$geography_dir, "tract_centroids.gpkg"),
     file.path(cfg$paths$geography_dir, "county_outlines.gpkg")
   )
-  zone_files <- c(
-    file.path(cfg$paths$geography_dir, "analysis_zones.gpkg"),
-    file.path(cfg$paths$geography_dir, "analysis_zone_centroids.gpkg"),
-    file.path(cfg$paths$geography_dir, "tract_to_analysis_zone.csv")
-  )
-  needs_zone_files <- tolower(cfg$geography$analysis_unit %||% "tract") != "tract"
-
-  if (!all_files_nonempty(core_files, min_bytes = 100) || (needs_zone_files && !all_files_nonempty(zone_files, min_bytes = 50))) {
+  if (!all_files_nonempty(core_files, min_bytes = 100)) {
     message("Geography files are missing for unit `", cfg$geography$analysis_unit, "`. Rebuilding geography outputs automatically.")
     download_county_tract_geography(cfg)
   }
@@ -85,18 +78,10 @@ build_analysis_zones <- function(cfg, tracts_sf) {
   }
 
   if (unit %in% c("zip", "zipcode", "zcta")) {
-    zcta_year <- min(as.integer(cfg$analysis_area$tract_year), 2020L)
-    if (zcta_year != as.integer(cfg$analysis_area$tract_year)) {
-      message("Using ZCTA year ", zcta_year, " because CB ZCTA shapefiles are not available for ", cfg$analysis_area$tract_year, ".")
-    }
-
-    zcta_all <- tigris::zctas(year = zcta_year, class = "sf", cb = TRUE, progress_bar = FALSE) %>%
+    zcta_all <- tigris::zctas(year = cfg$analysis_area$tract_year, class = "sf", cb = TRUE, progress_bar = FALSE) %>%
       sf::st_transform(4326) %>%
       {
-        zcta_id_col <- dplyr::first(intersect(c("ZCTA5CE20", "ZCTA5CE10", "GEOID20", "GEOID10", "ZCTA5CE"), names(.)))
-        if (is.null(zcta_id_col) || is.na(zcta_id_col) || !nzchar(zcta_id_col)) {
-          stop("Could not identify a ZIP/ZCTA id column in tigris::zctas() output.", call. = FALSE)
-        }
+        zcta_id_col <- names(.)[grepl("^ZCTA5CE", names(.))][1]
         dplyr::transmute(., zone_id = standardize_zone_id(.data[[zcta_id_col]], "zip"), zone_name = paste0("ZIP ", standardize_zone_id(.data[[zcta_id_col]], "zip")), geometry)
       }
 
@@ -106,21 +91,8 @@ build_analysis_zones <- function(cfg, tracts_sf) {
       dplyr::select(tract_id, zone_id)
     tract_match$zone_id[is.na(tract_match$zone_id)] <- tract_match$tract_id[is.na(tract_match$zone_id)]
 
-    fallback_tract_zones <- tracts_sf %>%
-      dplyr::transmute(
-        tract_id = GEOID,
-        zone_id = GEOID,
-        zone_name = paste0("TRACT ", GEOID),
-        geometry
-      ) %>%
-      dplyr::semi_join(tract_match %>% dplyr::filter(zone_id == tract_id), by = "tract_id") %>%
-      dplyr::select(zone_id, zone_name, geometry)
-
-    zones <- dplyr::bind_rows(
-      zcta_all %>% dplyr::filter(zone_id %in% unique(tract_match$zone_id)),
-      fallback_tract_zones
-    ) %>%
-      dplyr::distinct(zone_id, .keep_all = TRUE)
+    zones <- zcta_all %>%
+      dplyr::filter(zone_id %in% unique(tract_match$zone_id))
     return(list(zones = zones, crosswalk = tract_match))
   }
 

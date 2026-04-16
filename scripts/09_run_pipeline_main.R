@@ -18,9 +18,6 @@ pipeline_main <- list(
   run_label = NULL,
   force_all = FALSE
 )
-if (!fs::is_absolute_path(pipeline_main$config_path)) {
-  pipeline_main$config_path <- normalizePath(file.path(project_root, pipeline_main$config_path), winslash = "/", mustWork = FALSE)
-}
 
 source(file.path(project_root, "R", "packages.R"))
 java_boot <- peek_java_config(pipeline_main$config_path)

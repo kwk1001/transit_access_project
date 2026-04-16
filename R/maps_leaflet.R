@@ -115,6 +115,8 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
   if (is.null(default_group) || !default_group %in% group_values) default_group <- group_values[[1]]
 
   pal_fun <- if (metric_is_diverging(metric_col)) make_diverging_palette else make_sequential_palette
+  global_values <- sf_obj %>% sf::st_drop_geometry() %>% dplyr::pull(.data[[metric_col]])
+  pal <- pal_fun(global_values)
   map_obj <- leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE)) %>%
     leaflet::addProviderTiles(leaflet::providers$CartoDB.Positron)
 
@@ -123,7 +125,6 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
     if (nrow(df) == 0) next
 
     df <- df %>% mutate(map_value = .data[[metric_col]])
-    pal <- pal_fun(df$map_value)
     popup_html <- format_popup_table(df, popup_cols)
 
     map_obj <- map_obj %>%
@@ -139,7 +140,7 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
       ) %>%
       leaflet::addLegend(
         pal = pal,
-        values = df$map_value,
+        values = global_values,
         title = metric_label(metric_col),
         position = "bottomright",
         group = grp
@@ -167,21 +168,21 @@ build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col) {
     )
 }
 
-build_od_lines_sf <- function(top_pairs_df, tract_centroids_sf, tracts_sf, max_pairs = 500) {
-  tract_points <- tract_centroids_sf %>%
+build_od_lines_sf <- function(top_pairs_df, zone_centroids_sf, zones_sf, max_pairs = 500) {
+  tract_points <- zone_centroids_sf %>%
     sf::st_transform(4326) %>%
     mutate(
-      tract_id = standardize_geoid11(tract_id),
+      tract_id = as.character(zone_id),
       lon = sf::st_coordinates(.)[, 1],
       lat = sf::st_coordinates(.)[, 2]
     ) %>%
     sf::st_drop_geometry() %>%
     select(tract_id, lon, lat)
 
-  tract_names <- tracts_sf %>% sf::st_drop_geometry() %>% transmute(tract_id = GEOID, tract_name = NAME)
+  tract_names <- zones_sf %>% sf::st_drop_geometry() %>% transmute(tract_id = as.character(zone_id), tract_name = as.character(zone_name))
 
   top_use <- top_pairs_df %>%
-    standardize_tract_id_cols(c("origin_id", "destination_id")) %>%
+    mutate(origin_id = as.character(origin_id), destination_id = as.character(destination_id)) %>%
     mutate(weight_use = dplyr::coalesce(weight_sum_adjusted, weight_sum)) %>%
     group_by(scenario_id) %>%
     arrange(desc(weight_use), .by_group = TRUE) %>%
@@ -316,11 +317,15 @@ build_od_line_map <- function(lines_sf, county_outlines, output_path, default_gr
        }
 
        function setLayerVisible(layer, visible) {
-         var baseWeight = 2;
-         if (layer && layer.options && layer.options.weight !== undefined) {
-           baseWeight = parseFloat(layer.options.weight);
-           if (!isFinite(baseWeight)) baseWeight = 2;
+         if (layer && layer._odBaseWeight === undefined) {
+           var firstWeight = 2;
+           if (layer.options && layer.options.weight !== undefined) {
+             firstWeight = parseFloat(layer.options.weight);
+             if (!isFinite(firstWeight)) firstWeight = 2;
+           }
+           layer._odBaseWeight = firstWeight;
          }
+         var baseWeight = layer._odBaseWeight || 2;
 
          if (layer.setStyle) {
            layer.setStyle({
@@ -419,13 +424,14 @@ write_maps_index <- function(index_entries, output_path, title_text) {
 
 make_all_interactive_maps <- function(cfg) {
   county_outlines <- sf::st_read(file.path(cfg$paths$geography_dir, "county_outlines.gpkg"), quiet = TRUE)
-  tracts_sf <- sf::st_read(file.path(cfg$paths$geography_dir, "tracts.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("GEOID"))
-  tract_centroids <- sf::st_read(file.path(cfg$paths$geography_dir, "tract_centroids.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("tract_id"))
+  tracts_sf <- sf::st_read(file.path(cfg$paths$geography_dir, "analysis_zones.gpkg"), quiet = TRUE) %>% dplyr::rename(GEOID = zone_id, NAME = zone_name)
+  tract_centroids <- sf::st_read(file.path(cfg$paths$geography_dir, "analysis_zone_centroids.gpkg"), quiet = TRUE)
+  analysis_zones <- sf::st_read(file.path(cfg$paths$geography_dir, "analysis_zones.gpkg"), quiet = TRUE)
   metrics_sf <- sf::st_read(file.path(cfg$paths$accessibility_dir, "tract_period_metrics.gpkg"), quiet = TRUE)
   comparisons_sf <- sf::st_read(file.path(cfg$paths$accessibility_dir, "tract_period_comparisons.gpkg"), quiet = TRUE)
-  od_origin <- read_csv_guess(file.path(cfg$paths$od_dir, "od_marginals_origin.csv")) %>% standardize_tract_id_cols(c("origin_id"))
-  od_destination <- read_csv_guess(file.path(cfg$paths$od_dir, "od_marginals_destination.csv")) %>% standardize_tract_id_cols(c("destination_id"))
-  od_top_pairs <- read_csv_guess(file.path(cfg$paths$od_dir, "top_od_pairs.csv")) %>% standardize_tract_id_cols(c("origin_id", "destination_id"))
+  od_origin <- read_csv_guess(file.path(cfg$paths$od_dir, "od_marginals_origin.csv")) %>% mutate(origin_id = as.character(origin_id))
+  od_destination <- read_csv_guess(file.path(cfg$paths$od_dir, "od_marginals_destination.csv")) %>% mutate(destination_id = as.character(destination_id))
+  od_top_pairs <- read_csv_guess(file.path(cfg$paths$od_dir, "top_od_pairs.csv")) %>% mutate(origin_id = as.character(origin_id), destination_id = as.character(destination_id))
 
   fs::dir_create(cfg$paths$maps_dir)
 
@@ -492,7 +498,7 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title("destination_total_weight"), description = metric_description("destination_total_weight"), section = "OD importance maps"))
   }
 
-  lines_sf <- build_od_lines_sf(od_top_pairs, tract_centroids, tracts_sf, max_pairs = od_top_pairs_max)
+  lines_sf <- build_od_lines_sf(od_top_pairs, tract_centroids, analysis_zones, max_pairs = od_top_pairs_max)
   if (!is.null(lines_sf) && nrow(lines_sf) > 0) {
     out_path <- file.path(cfg$paths$maps_dir, "od_top_pairs_interactive.html")
     build_od_line_map(lines_sf, county_outlines, out_path, default_group = default_od_group, default_top_n = od_top_pairs_default)

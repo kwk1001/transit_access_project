@@ -122,7 +122,6 @@ is_valid_zone_id_for_unit <- function(zone_id, unit) {
   !is.na(zone_chr) & nzchar(zone_chr)
 }
 
-<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
 ensure_origin_id_column <- function(sf_obj, unit) {
   if ("origin_id" %in% names(sf_obj)) {
     sf_obj$origin_id <- standardize_zone_id(sf_obj$origin_id, unit)
@@ -136,9 +135,6 @@ ensure_origin_id_column <- function(sf_obj, unit) {
 
   sf_obj %>% dplyr::mutate(origin_id = standardize_zone_id(.data[[fallback_col]], unit))
 }
-
-=======
->>>>>>> main
 build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, popup_cols, output_path, default_group = NULL) {
   group_values <- sf_obj %>% sf::st_drop_geometry() %>% dplyr::pull(.data[[group_col]]) %>% unique() %>% sort()
   if (length(group_values) == 0) return(invisible(NULL))
@@ -190,7 +186,32 @@ build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, pop
   invisible(map_obj)
 }
 
-build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col) {
+build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col, unit = "tract") {
+  if (!id_col %in% names(marginals_df)) {
+    fallback_candidates <- c(
+      "zone_id",
+      "GEOID",
+      "geoid",
+      "tract_id",
+      if (id_col == "origin_id") c("origin", "from_id") else character(),
+      if (id_col == "destination_id") c("destination", "to_id") else character()
+    )
+    fallback_col <- dplyr::first(intersect(fallback_candidates, names(marginals_df)))
+    if (is.null(fallback_col) || !nzchar(fallback_col)) {
+      stop(
+        paste0(
+          "OD marginal data is missing `", id_col,
+          "`. Expected `", id_col,
+          "` or one of: ", paste(fallback_candidates, collapse = ", "), "."
+        ),
+        call. = FALSE
+      )
+    }
+    marginals_df <- marginals_df %>% dplyr::mutate(!!id_col := .data[[fallback_col]])
+  }
+
+  marginals_df <- marginals_df %>% dplyr::mutate(!!id_col := standardize_zone_id(.data[[id_col]], unit))
+
   tracts_sf %>%
     left_join(marginals_df, by = setNames(id_col, "GEOID")) %>%
     mutate(
@@ -484,14 +505,8 @@ make_all_interactive_maps <- function(cfg) {
     pull(origin_id) %>%
     unique()
 
-<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
   metrics_sf <- ensure_origin_id_column(metrics_sf, cfg$geography$analysis_unit) %>%
     mutate(
-=======
-  metrics_sf <- metrics_sf %>%
-    mutate(
-      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
->>>>>>> main
       scenario_id = as.character(scenario_id),
       time_window_id = as.character(time_window_id),
       period_id = as.character(period_id)
@@ -522,14 +537,8 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility level maps"))
   }
 
-<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
   comparisons_sf <- ensure_origin_id_column(comparisons_sf, cfg$geography$analysis_unit) %>%
     mutate(
-=======
-  comparisons_sf <- comparisons_sf %>%
-    mutate(
-      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
->>>>>>> main
       scenario_id = as.character(scenario_id),
       time_window_id = as.character(time_window_id),
       comparison_id = as.character(comparison_id)
@@ -561,7 +570,7 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility change maps"))
   }
 
-  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight") %>%
+  origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
       origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)
@@ -572,7 +581,7 @@ make_all_interactive_maps <- function(cfg) {
       !is.na(scenario_id)
     ) %>%
     mutate(layer_group = scenario_id)
-  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight") %>%
+  destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
       destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)

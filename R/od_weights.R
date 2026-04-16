@@ -51,6 +51,13 @@ study_area_county_fips <- function(cfg) {
 }
 
 apply_trip_filters <- function(trips_df, scenario, cfg) {
+  geography_outputs <- read_geography_outputs(cfg)
+  tract_to_zone <- geography_outputs$tract_to_zone %>%
+    dplyr::mutate(
+      tract_id = standardize_geoid11(tract_id),
+      zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)
+    )
+
   out <- trips_df %>%
     mutate(
       analysis_weight = safe_numeric(analysis_weight),
@@ -97,7 +104,7 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
   }
 
   county_keep <- study_area_county_fips(cfg)
-  out %>%
+  out <- out %>%
     filter(
       !is.na(origin_tract),
       !is.na(destination_tract),
@@ -105,7 +112,16 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
       analysis_weight > 0,
       stringr::str_sub(origin_tract, 1, 5) %in% county_keep,
       stringr::str_sub(destination_tract, 1, 5) %in% county_keep
-    )
+    ) %>%
+    left_join(tract_to_zone %>% rename(origin_tract = tract_id, origin_zone = zone_id), by = "origin_tract") %>%
+    left_join(tract_to_zone %>% rename(destination_tract = tract_id, destination_zone = zone_id), by = "destination_tract") %>%
+    mutate(
+      origin_tract = dplyr::coalesce(origin_zone, origin_tract),
+      destination_tract = dplyr::coalesce(destination_zone, destination_tract)
+    ) %>%
+    select(-origin_zone, -destination_zone)
+
+  out
 }
 
 apply_auxiliary_od_multipliers <- function(od_df, cfg) {
@@ -114,7 +130,7 @@ apply_auxiliary_od_multipliers <- function(od_df, cfg) {
 
   if (!is.null(aux_cfg$origin_multiplier_file) && !is.na(aux_cfg$origin_multiplier_file) && file.exists(aux_cfg$origin_multiplier_file)) {
     origin_aux <- read_csv_guess(aux_cfg$origin_multiplier_file) %>%
-      transmute(origin_id = standardize_geoid11(.data[[aux_cfg$origin_id_col]]), origin_multiplier = safe_numeric(.data[[aux_cfg$origin_multiplier_col]]))
+      transmute(origin_id = standardize_zone_id(.data[[aux_cfg$origin_id_col]], cfg$geography$analysis_unit), origin_multiplier = safe_numeric(.data[[aux_cfg$origin_multiplier_col]]))
 
     out <- out %>%
       left_join(origin_aux, by = c("origin_id" = "origin_id"), suffix = c("", "_aux")) %>%
@@ -124,7 +140,7 @@ apply_auxiliary_od_multipliers <- function(od_df, cfg) {
 
   if (!is.null(aux_cfg$destination_multiplier_file) && !is.na(aux_cfg$destination_multiplier_file) && file.exists(aux_cfg$destination_multiplier_file)) {
     dest_aux <- read_csv_guess(aux_cfg$destination_multiplier_file) %>%
-      transmute(destination_id = standardize_geoid11(.data[[aux_cfg$destination_id_col]]), destination_multiplier = safe_numeric(.data[[aux_cfg$destination_multiplier_col]]))
+      transmute(destination_id = standardize_zone_id(.data[[aux_cfg$destination_id_col]], cfg$geography$analysis_unit), destination_multiplier = safe_numeric(.data[[aux_cfg$destination_multiplier_col]]))
 
     out <- out %>%
       left_join(dest_aux, by = c("destination_id" = "destination_id"), suffix = c("", "_aux")) %>%
@@ -170,8 +186,8 @@ build_one_od_scenario <- function(trips_df, scenario, cfg) {
       .groups = "drop"
     ) %>%
     mutate(
-      origin_id = standardize_geoid11(origin_id),
-      destination_id = standardize_geoid11(destination_id),
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
       time_bin = as.character(time_bin),
       scenario_id = as.character(scenario$scenario_id),
       scenario_label = as.character(scenario$scenario_label),
@@ -209,10 +225,10 @@ build_all_od_weights <- function(cfg) {
 
   scenario_results <- purrr::map(cfg$od_scenarios, ~ build_one_od_scenario(trips_std, .x, cfg))
 
-  od_all <- purrr::map_dfr(scenario_results, "od") %>% standardize_tract_id_cols(c("origin_id", "destination_id"))
-  origin_all <- purrr::map_dfr(scenario_results, "origin_marginals") %>% standardize_tract_id_cols(c("origin_id"))
-  dest_all <- purrr::map_dfr(scenario_results, "destination_marginals") %>% standardize_tract_id_cols(c("destination_id"))
-  top_pairs_all <- purrr::map_dfr(scenario_results, "top_pairs") %>% standardize_tract_id_cols(c("origin_id", "destination_id"))
+  od_all <- purrr::map_dfr(scenario_results, "od") %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit), destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit))
+  origin_all <- purrr::map_dfr(scenario_results, "origin_marginals") %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit))
+  dest_all <- purrr::map_dfr(scenario_results, "destination_marginals") %>% mutate(destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit))
+  top_pairs_all <- purrr::map_dfr(scenario_results, "top_pairs") %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit), destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit))
 
   fs::dir_create(cfg$paths$od_dir)
   write_csv_gz(od_all, file.path(cfg$paths$od_dir, "od_weights_all.csv.gz"))
@@ -225,7 +241,10 @@ build_all_od_weights <- function(cfg) {
 
 read_od_weights <- function(cfg) {
   read_csv_guess(file.path(cfg$paths$od_dir, "od_weights_all.csv.gz")) %>%
-    standardize_tract_id_cols(c("origin_id", "destination_id")) %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit)
+    ) %>%
     mutate(
       scenario_id = as.character(scenario_id),
       time_bin = as.character(time_bin)

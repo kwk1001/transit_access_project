@@ -31,14 +31,17 @@ prune_empty_dirs <- function(root_dir) {
 cleanup_empty_run_dirs <- function(cfg) {
   city_id <- cfg$project$city_id
   source_id <- cfg$active_survey_source$source_id
+  unit_id <- cfg$geography$analysis_unit %||% "tract"
 
-  processed_root <- file.path("data", "processed", city_id, "runs", source_id)
-  maps_root <- file.path("outputs", city_id, "maps", source_id)
+  processed_root <- file.path("data", "processed", city_id, "runs", source_id, unit_id)
+  maps_root <- file.path("outputs", city_id, "maps", source_id, unit_id)
+  logs_root <- file.path("logs", city_id, source_id, unit_id)
 
   removed_processed <- prune_empty_dirs(processed_root)
   removed_maps <- prune_empty_dirs(maps_root)
+  removed_logs <- prune_empty_dirs(logs_root)
 
-  removed <- unique(c(removed_processed, removed_maps))
+  removed <- unique(c(removed_processed, removed_maps, removed_logs))
   if (length(removed) > 0) {
     message("Removed empty run directories:")
     message(paste0("  - ", removed), sep = "\n")

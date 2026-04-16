@@ -198,9 +198,14 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
     analysis_area = list(
       counties = cfg_yaml$analysis_area$counties,
       tract_year = cfg_yaml$analysis_area$tract_year,
-      county_outline_year = cfg_yaml$analysis_area$county_outline_year %||% cfg_yaml$analysis_area$tract_year
+      county_outline_year = cfg_yaml$analysis_area$county_outline_year %||% cfg_yaml$analysis_area$tract_year,
+      zip_zcta_year = as.integer(cfg_yaml$analysis_area$zip_zcta_year %||% 2020),
+      taz_file = cfg_yaml$analysis_area$taz_file %||% NULL,
+      taz_id_col = cfg_yaml$analysis_area$taz_id_col %||% "taz_id",
+      taz_name_col = cfg_yaml$analysis_area$taz_name_col %||% NULL
     ),
     geography = list(
+      analysis_unit = tolower(cfg_yaml$geography$analysis_unit %||% "tract"),
       service_buffer_m = cfg_yaml$routing$service_area_buffer_m %||% 2000,
       restrict_to_gtfs_service_area = isTRUE(cfg_yaml$routing$restrict_to_service_area)
     ),
@@ -265,9 +270,14 @@ normalize_list_config <- function(cfg_raw, config_path) {
     analysis_area = list(
       counties = make_county_specs_from_list_config(cfg_raw),
       tract_year = cfg_raw$study_area$tract_year,
-      county_outline_year = cfg_raw$study_area$county_year
+      county_outline_year = cfg_raw$study_area$county_year,
+      zip_zcta_year = as.integer(cfg_raw$analysis_area$zip_zcta_year %||% 2020),
+      taz_file = cfg_raw$analysis_area$taz_file %||% NULL,
+      taz_id_col = cfg_raw$analysis_area$taz_id_col %||% "taz_id",
+      taz_name_col = cfg_raw$analysis_area$taz_name_col %||% NULL
     ),
     geography = list(
+      analysis_unit = tolower(cfg_raw$geography$analysis_unit %||% "tract"),
       service_buffer_m = cfg_raw$geography$service_buffer_m,
       restrict_to_gtfs_service_area = isTRUE(cfg_raw$geography$restrict_to_gtfs_service_area)
     ),
@@ -402,7 +412,8 @@ compute_analysis_signature <- function(cfg) {
 build_project_paths <- function(cfg, source_id, run_id) {
   project_root <- project_root_from_config(cfg$project$config_path)
   city_id <- cfg$project$city_id
-  run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, run_id)
+  unit_id <- cfg$geography$analysis_unit %||% "tract"
+  run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, unit_id, run_id)
   list(
     project_root = project_root,
     run_id = run_id,
@@ -411,7 +422,7 @@ build_project_paths <- function(cfg, source_id, run_id) {
     raw_gtfs_dir = file.path(project_root, "data", "raw", "gtfs", city_id),
     raw_osm_dir = file.path(project_root, "data", "raw", "osm", city_id),
     survey_dir = file.path(project_root, "data", "processed", city_id, "survey", source_id),
-    geography_dir = file.path(project_root, "data", "processed", city_id, "geography", "base"),
+    geography_dir = file.path(project_root, "data", "processed", city_id, "geography", cfg$geography$analysis_unit %||% "tract"),
     service_area_dir = file.path(run_root, "geography"),
     od_dir = file.path(run_root, "od"),
     gtfs_output_dir = file.path(run_root, "gtfs_supply"),
@@ -419,8 +430,8 @@ build_project_paths <- function(cfg, source_id, run_id) {
     travel_time_dir = file.path(run_root, "travel_times"),
     accessibility_dir = file.path(run_root, "accessibility"),
     metadata_dir = file.path(run_root, "metadata"),
-    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, run_id),
-    logs_dir = file.path(project_root, "logs", city_id, source_id, run_id)
+    maps_dir = file.path(project_root, "outputs", city_id, "maps", source_id, unit_id, run_id),
+    logs_dir = file.path(project_root, "logs", city_id, source_id, unit_id, run_id)
   )
 }
 
@@ -454,7 +465,8 @@ load_project_config <- function(config_path, source_id = NULL) {
   sig <- compute_analysis_signature(cfg)
   sig_short <- substr(sig$analysis_signature, 1, 12)
   run_label <- sanitize_path_component(cfg$run_management$run_label %||% "")
-  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", sig_short) else paste0("sig_", sig_short)
+  unit_label <- sanitize_path_component(cfg$geography$analysis_unit %||% "tract")
+  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", unit_label, "__", sig_short) else paste0(unit_label, "__", sig_short)
 
   cfg$run <- list(
     run_label = if (run_label == "item") "" else run_label,
@@ -491,4 +503,35 @@ parse_args_config <- function(default_config = NULL, project_root = getwd()) {
     config_path = config_path,
     source_id = if (length(args) >= 2) args[[2]] else NULL
   )
+}
+
+apply_runtime_overrides <- function(cfg, overrides = list()) {
+  if (length(overrides) == 0) return(cfg)
+
+  if (!is.null(overrides$analysis_unit)) {
+    cfg$geography$analysis_unit <- tolower(as.character(overrides$analysis_unit))
+  }
+  if (!is.null(overrides$run_label)) {
+    cfg$run_management$run_label <- as.character(overrides$run_label)
+  }
+  if (!is.null(overrides$force_all)) {
+    cfg$run_options$force <- isTRUE(overrides$force_all)
+  }
+
+  sig <- compute_analysis_signature(cfg)
+  sig_short <- substr(sig$analysis_signature, 1, 12)
+  run_label <- sanitize_path_component(cfg$run_management$run_label %||% "")
+  unit_label <- sanitize_path_component(cfg$geography$analysis_unit %||% "tract")
+  run_id <- if (nzchar(run_label) && run_label != "item") paste0(run_label, "__", unit_label, "__", sig_short) else paste0(unit_label, "__", sig_short)
+
+  cfg$run <- list(
+    run_label = if (run_label == "item") "" else run_label,
+    run_id = run_id,
+    analysis_signature = sig$analysis_signature,
+    analysis_signature_short = sig_short,
+    analysis_config = sig$analysis_config,
+    runtime_config = sig$runtime_config
+  )
+  cfg$paths <- build_project_paths(cfg, cfg$active_survey_source_id, run_id)
+  cfg
 }

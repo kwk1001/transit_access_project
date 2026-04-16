@@ -27,6 +27,25 @@ standardize_geoid11 <- function(x) {
   ifelse(is.na(x_chr), NA_character_, stringr::str_pad(x_chr, width = 11, side = "left", pad = "0"))
 }
 
+standardize_zone_id <- function(x, unit = "tract") {
+  unit_use <- tolower(as.character(unit %||% "tract"))
+  x_chr <- as.character(x)
+  x_chr <- trimws(x_chr)
+  x_chr[x_chr == ""] <- NA_character_
+
+  if (unit_use %in% c("tract", "census_tract")) {
+    return(standardize_geoid11(x_chr))
+  }
+
+  if (unit_use %in% c("zip", "zipcode", "zcta")) {
+    digits <- stringr::str_replace_all(x_chr, "[^0-9]", "")
+    digits[digits == ""] <- NA_character_
+    return(ifelse(is.na(digits), NA_character_, stringr::str_pad(digits, width = 5, side = "left", pad = "0")))
+  }
+
+  x_chr
+}
+
 standardize_tract_id_cols <- function(df, cols = c("GEOID", "tract_id", "origin_id", "destination_id", "from_id", "to_id", "origin_tract", "destination_tract", "home_tract", "work_tract", "school_tract")) {
   cols_use <- intersect(cols, names(df))
   for (nm in cols_use) {
@@ -371,7 +390,7 @@ write_run_metadata <- function(cfg) {
     executed_at_utc = format(Sys.time(), tz = "UTC", usetz = TRUE),
     config_path = cfg$project$config_path
   )
-  stamp_path <- file.path(cfg$paths$logs_dir, paste0("execution_", format(Sys.time(), "%Y%m%dT%H%M%SZ", tz = "UTC"), ".csv"))
+  stamp_path <- file.path(cfg$paths$logs_dir, "execution_latest.csv")
   readr::write_csv(execution_stamp, stamp_path)
 
   invisible(manifest)

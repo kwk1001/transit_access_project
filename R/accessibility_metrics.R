@@ -6,8 +6,9 @@ compute_period_metrics <- function(cfg) {
     )
 
   period_ttm <- read_csv_guess(file.path(cfg$paths$travel_time_dir, "period_travel_times.csv.gz")) %>%
-    standardize_tract_id_cols(c("from_id", "to_id")) %>%
     mutate(
+      from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit),
+      to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit),
       od_scenario_id = as.character(od_scenario_id),
       time_window_id = as.character(time_window_id),
       period_id = as.character(period_id)
@@ -63,8 +64,8 @@ compute_period_metrics <- function(cfg) {
 
   pair_period_metrics <- od_joined %>%
     transmute(
-      origin_id = standardize_geoid11(origin_id),
-      destination_id = standardize_geoid11(destination_id),
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
       scenario_id,
       time_window_id = time_bin,
       period_id,
@@ -142,9 +143,9 @@ compute_period_metrics <- function(cfg) {
       by = c("comparison_id", "base_period_id", "compare_period_id", "origin_id", "scenario_id", "time_window_id")
     )
 
-  tracts_sf <- geography_outputs$tracts %>% rename(origin_id = GEOID) %>% standardize_tract_id_cols(c("origin_id"))
-  tract_period_metrics_sf <- tracts_sf %>% left_join(tract_period_metrics, by = "origin_id")
-  tract_period_comparisons_sf <- tracts_sf %>% left_join(tract_period_comparisons, by = "origin_id")
+  analysis_zones_sf <- geography_outputs$analysis_zones %>% rename(origin_id = zone_id, NAME = zone_name) %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit))
+  tract_period_metrics_sf <- analysis_zones_sf %>% left_join(tract_period_metrics, by = "origin_id")
+  tract_period_comparisons_sf <- analysis_zones_sf %>% left_join(tract_period_comparisons, by = "origin_id")
 
   fs::dir_create(cfg$paths$accessibility_dir)
   readr::write_csv(tract_period_metrics, file.path(cfg$paths$accessibility_dir, "tract_period_metrics.csv"))

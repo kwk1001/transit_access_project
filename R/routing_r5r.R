@@ -148,9 +148,12 @@ get_active_geography_for_routing <- function(cfg) {
     ))
   }
 
+  base <- read_geography_outputs(cfg)
   list(
-    tracts = sf::st_read(file.path(cfg$paths$geography_dir, "tracts.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("GEOID")),
-    tract_centroids = sf::st_read(file.path(cfg$paths$geography_dir, "tract_centroids.gpkg"), quiet = TRUE) %>% standardize_tract_id_cols(c("tract_id"))
+    tracts = base$tracts,
+    tract_centroids = base$tract_centroids,
+    analysis_zones = base$analysis_zones,
+    analysis_zone_centroids = base$analysis_zone_centroids
   )
 }
 
@@ -172,15 +175,15 @@ choose_routing_dates <- function(cfg) {
   all_dates
 }
 
-make_routing_points <- function(tract_centroids_sf, tract_ids) {
-  tract_ids <- standardize_geoid11(tract_ids)
-  tract_centroids_sf %>%
-    mutate(tract_id = standardize_geoid11(tract_id)) %>%
-    filter(tract_id %in% tract_ids) %>%
+make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
+  zone_ids <- standardize_zone_id(zone_ids, cfg$geography$analysis_unit)
+  zone_centroids_sf %>%
+    mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
+    filter(zone_id %in% zone_ids) %>%
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
-    transmute(id = as.character(tract_id), lon = lon, lat = lat)
+    transmute(id = as.character(zone_id), lon = lon, lat = lat)
 }
 
 compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes) {
@@ -200,8 +203,8 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     progress = TRUE
   ) %>%
     mutate(
-      from_id = as.character(standardize_geoid11(from_id)),
-      to_id = as.character(standardize_geoid11(to_id))
+      from_id = as.character(from_id),
+      to_id = as.character(to_id)
     )
 }
 
@@ -221,7 +224,7 @@ expected_daily_output_paths <- function(cfg, od_all, geography_outputs, routing_
     win <- windows_tbl[win_i, ]
     od_use <- od_all %>% filter(scenario_id == win$od_scenario_id)
     origin_ids <- unique(od_use$origin_id)
-    origins_all <- make_routing_points(geography_outputs$tract_centroids, origin_ids)
+    origins_all <- make_routing_points(geography_outputs$analysis_zone_centroids, origin_ids, cfg)
     n_chunks <- if (nrow(origins_all) == 0) 0 else ceiling(nrow(origins_all) / cfg$routing$origin_chunk_size)
 
     if (n_chunks == 0) {
@@ -255,7 +258,7 @@ aggregate_period_travel_times <- function(cfg) {
 
   if (!isTRUE(cfg$run_options$force_routing) && output_is_fresh(out_path, daily_files, min_bytes = 100)) {
     message("Using cached period travel times.")
-    return(read_csv_guess(out_path) %>% standardize_tract_id_cols(c("from_id", "to_id")))
+    return(read_csv_guess(out_path) %>% mutate(from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit), to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)))
   }
 
   if (length(daily_files) == 0) {
@@ -263,8 +266,9 @@ aggregate_period_travel_times <- function(cfg) {
   }
 
   daily_all <- purrr::map_dfr(daily_files, read_csv_guess) %>%
-    standardize_tract_id_cols(c("from_id", "to_id")) %>%
     mutate(
+      from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit),
+      to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit),
       analysis_date = as.Date(analysis_date),
       period_id = as.character(period_id),
       time_window_id = as.character(time_window_id),
@@ -283,7 +287,7 @@ aggregate_period_travel_times <- function(cfg) {
   complete_daily <- routing_grid %>%
     left_join(od_all, by = c("od_scenario_id" = "scenario_id")) %>%
     rename(from_id = origin_id, to_id = destination_id) %>%
-    standardize_tract_id_cols(c("from_id", "to_id")) %>%
+    mutate(from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit), to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)) %>%
     left_join(
       daily_all,
       by = c("period_id", "analysis_date", "time_window_id", "od_scenario_id", "from_id", "to_id")
@@ -312,8 +316,8 @@ compute_all_travel_times <- function(cfg) {
   od_all <- read_od_weights(cfg) %>%
     mutate(
       scenario_id = as.character(scenario_id),
-      origin_id = as.character(standardize_geoid11(origin_id)),
-      destination_id = as.character(standardize_geoid11(destination_id))
+      origin_id = as.character(standardize_zone_id(origin_id, cfg$geography$analysis_unit)),
+      destination_id = as.character(standardize_zone_id(destination_id, cfg$geography$analysis_unit))
     )
   geography_outputs <- get_active_geography_for_routing(cfg)
   routing_dates <- choose_routing_dates(cfg)
@@ -324,7 +328,7 @@ compute_all_travel_times <- function(cfg) {
 
   if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_routing) && length(expected_files) > 0 && all_files_nonempty(expected_files, min_bytes = 100) && output_is_fresh(period_out, expected_files, min_bytes = 100)) {
     message("All travel time chunks and period aggregates already exist. Skipping routing.")
-    return(read_csv_guess(period_out) %>% standardize_tract_id_cols(c("from_id", "to_id")))
+    return(read_csv_guess(period_out) %>% mutate(from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit), to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)))
   }
 
   feed_groups <- split(routing_dates, routing_dates$feed_name)
@@ -348,15 +352,15 @@ compute_all_travel_times <- function(cfg) {
         od_use <- od_all %>%
           filter(scenario_id == win$od_scenario_id) %>%
           mutate(
-            origin_id = as.character(standardize_geoid11(origin_id)),
-            destination_id = as.character(standardize_geoid11(destination_id))
+            origin_id = as.character(standardize_zone_id(origin_id, cfg$geography$analysis_unit)),
+            destination_id = as.character(standardize_zone_id(destination_id, cfg$geography$analysis_unit))
           )
 
         origin_ids <- unique(od_use$origin_id)
         destination_ids <- unique(od_use$destination_id)
 
-        origins_all <- make_routing_points(geography_outputs$tract_centroids, origin_ids)
-        destinations_all <- make_routing_points(geography_outputs$tract_centroids, destination_ids)
+        origins_all <- make_routing_points(geography_outputs$analysis_zone_centroids, origin_ids, cfg)
+        destinations_all <- make_routing_points(geography_outputs$analysis_zone_centroids, destination_ids, cfg)
 
         if (nrow(origins_all) == 0 || nrow(destinations_all) == 0) {
           next
@@ -389,8 +393,8 @@ compute_all_travel_times <- function(cfg) {
             od_pairs_chunk <- od_use %>%
               filter(origin_id %in% origins_chunk$id) %>%
               transmute(
-                origin_id = as.character(standardize_geoid11(origin_id)),
-                destination_id = as.character(standardize_geoid11(destination_id))
+                origin_id = as.character(standardize_zone_id(origin_id, cfg$geography$analysis_unit)),
+                destination_id = as.character(standardize_zone_id(destination_id, cfg$geography$analysis_unit))
               ) %>%
               distinct()
 

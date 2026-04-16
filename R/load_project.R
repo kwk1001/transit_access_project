@@ -58,9 +58,12 @@ run_download_geography <- function(cfg) {
   tract_path <- file.path(cfg$paths$geography_dir, "tracts.gpkg")
   centroid_path <- file.path(cfg$paths$geography_dir, "tract_centroids.gpkg")
   county_path <- file.path(cfg$paths$geography_dir, "county_outlines.gpkg")
+  zones_path <- file.path(cfg$paths$geography_dir, "analysis_zones.gpkg")
+  zone_centroids_path <- file.path(cfg$paths$geography_dir, "analysis_zone_centroids.gpkg")
+  crosswalk_path <- file.path(cfg$paths$geography_dir, "tract_to_analysis_zone.csv")
   service_area_path <- file.path(cfg$paths$service_area_dir, "service_area.gpkg")
 
-  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_downloads) && all_files_nonempty(c(tract_path, centroid_path, county_path), 100) && file_is_nonempty(cfg$osm$local_pbf_path, 1024 * 1024) && (!isTRUE(cfg$geography$restrict_to_gtfs_service_area) || file_is_nonempty(service_area_path, 100))) {
+  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_downloads) && all_files_nonempty(c(tract_path, centroid_path, county_path, zones_path, zone_centroids_path, crosswalk_path), 50) && file_is_nonempty(cfg$osm$local_pbf_path, 1024 * 1024) && (!isTRUE(cfg$geography$restrict_to_gtfs_service_area) || file_is_nonempty(service_area_path, 100))) {
     message("Geography and OSM already prepared for run ", cfg$run$run_id, ". Skipping download step.")
     return(read_geography_outputs(cfg))
   }

@@ -215,6 +215,7 @@ build_od_marginal_sf <- function(tracts_sf, marginals_df, id_col, value_col, uni
   tracts_sf %>%
     left_join(marginals_df, by = setNames(id_col, "GEOID")) %>%
     mutate(
+      !!id_col := standardize_zone_id(.data$GEOID, unit),
       scenario_id = as.character(scenario_id),
       !!value_col := safe_numeric(.data[[value_col]])
     )
@@ -572,7 +573,6 @@ make_all_interactive_maps <- function(cfg) {
 
   origin_sf <- build_od_marginal_sf(tracts_sf, od_origin, "origin_id", "origin_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
-      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)
     ) %>%
     filter(
@@ -583,7 +583,6 @@ make_all_interactive_maps <- function(cfg) {
     mutate(layer_group = scenario_id)
   destination_sf <- build_od_marginal_sf(tracts_sf, od_destination, "destination_id", "destination_total_weight", unit = cfg$geography$analysis_unit) %>%
     mutate(
-      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit),
       scenario_id = as.character(scenario_id)
     ) %>%
     filter(

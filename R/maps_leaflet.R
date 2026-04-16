@@ -122,6 +122,7 @@ is_valid_zone_id_for_unit <- function(zone_id, unit) {
   !is.na(zone_chr) & nzchar(zone_chr)
 }
 
+<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
 ensure_origin_id_column <- function(sf_obj, unit) {
   if ("origin_id" %in% names(sf_obj)) {
     sf_obj$origin_id <- standardize_zone_id(sf_obj$origin_id, unit)
@@ -136,6 +137,8 @@ ensure_origin_id_column <- function(sf_obj, unit) {
   sf_obj %>% dplyr::mutate(origin_id = standardize_zone_id(.data[[fallback_col]], unit))
 }
 
+=======
+>>>>>>> main
 build_metric_map <- function(sf_obj, county_outlines, metric_col, group_col, popup_cols, output_path, default_group = NULL) {
   group_values <- sf_obj %>% sf::st_drop_geometry() %>% dplyr::pull(.data[[group_col]]) %>% unique() %>% sort()
   if (length(group_values) == 0) return(invisible(NULL))
@@ -481,8 +484,14 @@ make_all_interactive_maps <- function(cfg) {
     pull(origin_id) %>%
     unique()
 
+<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
   metrics_sf <- ensure_origin_id_column(metrics_sf, cfg$geography$analysis_unit) %>%
     mutate(
+=======
+  metrics_sf <- metrics_sf %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+>>>>>>> main
       scenario_id = as.character(scenario_id),
       time_window_id = as.character(time_window_id),
       period_id = as.character(period_id)
@@ -513,8 +522,14 @@ make_all_interactive_maps <- function(cfg) {
     index_entries <- bind_rows(index_entries, tibble(file = out_path, title = metric_short_title(metric_col), description = metric_description(metric_col), section = "Accessibility level maps"))
   }
 
+<<<<<<< codex/fix-overlapping-layers-in-zip-code-map
   comparisons_sf <- ensure_origin_id_column(comparisons_sf, cfg$geography$analysis_unit) %>%
     mutate(
+=======
+  comparisons_sf <- comparisons_sf %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+>>>>>>> main
       scenario_id = as.character(scenario_id),
       time_window_id = as.character(time_window_id),
       comparison_id = as.character(comparison_id)

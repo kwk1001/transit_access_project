@@ -14,6 +14,7 @@ survey:
 analysis_area:
   tract_year: 2023
   county_outline_year: 2023
+  zip_zcta_year: 2020
   taz_file: null
   taz_id_col: taz_id
   taz_name_col: taz_name

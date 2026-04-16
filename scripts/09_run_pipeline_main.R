@@ -14,10 +14,13 @@ project_root <- if (!is.null(script_path)) normalizePath(file.path(dirname(scrip
 pipeline_main <- list(
   config_path = file.path("config", "chicago.yml"),
   source_id = NULL,
-  analysis_unit = "zip", # "tract", "zip", or "taz"
+  analysis_unit = NULL, # "tract", "zip", or "taz"
   run_label = NULL,
   force_all = FALSE
 )
+if (!fs::is_absolute_path(pipeline_main$config_path)) {
+  pipeline_main$config_path <- normalizePath(file.path(project_root, pipeline_main$config_path), winslash = "/", mustWork = FALSE)
+}
 
 source(file.path(project_root, "R", "packages.R"))
 java_boot <- peek_java_config(pipeline_main$config_path)

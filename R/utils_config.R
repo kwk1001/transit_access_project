@@ -199,6 +199,7 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       counties = cfg_yaml$analysis_area$counties,
       tract_year = cfg_yaml$analysis_area$tract_year,
       county_outline_year = cfg_yaml$analysis_area$county_outline_year %||% cfg_yaml$analysis_area$tract_year,
+      zip_zcta_year = as.integer(cfg_yaml$analysis_area$zip_zcta_year %||% 2020),
       taz_file = cfg_yaml$analysis_area$taz_file %||% NULL,
       taz_id_col = cfg_yaml$analysis_area$taz_id_col %||% "taz_id",
       taz_name_col = cfg_yaml$analysis_area$taz_name_col %||% NULL
@@ -270,6 +271,7 @@ normalize_list_config <- function(cfg_raw, config_path) {
       counties = make_county_specs_from_list_config(cfg_raw),
       tract_year = cfg_raw$study_area$tract_year,
       county_outline_year = cfg_raw$study_area$county_year,
+      zip_zcta_year = as.integer(cfg_raw$analysis_area$zip_zcta_year %||% 2020),
       taz_file = cfg_raw$analysis_area$taz_file %||% NULL,
       taz_id_col = cfg_raw$analysis_area$taz_id_col %||% "taz_id",
       taz_name_col = cfg_raw$analysis_area$taz_name_col %||% NULL

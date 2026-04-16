@@ -140,11 +140,22 @@ build_service_area <- function(cfg, geography_outputs) {
 get_active_geography_for_routing <- function(cfg) {
   served_tracts_path <- file.path(cfg$paths$service_area_dir, "tracts_served.gpkg")
   served_centroids_path <- file.path(cfg$paths$service_area_dir, "tract_centroids_served.gpkg")
+  base <- read_geography_outputs(cfg)
 
   if (file_is_nonempty(served_tracts_path, 100) && file_is_nonempty(served_centroids_path, 100)) {
+    served_tracts <- sf::st_read(served_tracts_path, quiet = TRUE) %>% standardize_tract_id_cols(c("GEOID"))
+    served_centroids <- sf::st_read(served_centroids_path, quiet = TRUE) %>% standardize_tract_id_cols(c("tract_id"))
+    served_zone_ids <- base$tract_to_zone %>%
+      filter(tract_id %in% served_tracts$GEOID) %>%
+      pull(zone_id) %>%
+      unique()
+    if (length(served_zone_ids) == 0) served_zone_ids <- unique(base$analysis_zone_centroids$zone_id)
+
     return(list(
-      tracts = sf::st_read(served_tracts_path, quiet = TRUE) %>% standardize_tract_id_cols(c("GEOID")),
-      tract_centroids = sf::st_read(served_centroids_path, quiet = TRUE) %>% standardize_tract_id_cols(c("tract_id"))
+      tracts = served_tracts,
+      tract_centroids = served_centroids,
+      analysis_zones = base$analysis_zones %>% filter(zone_id %in% served_zone_ids),
+      analysis_zone_centroids = base$analysis_zone_centroids %>% filter(zone_id %in% served_zone_ids)
     ))
   }
 

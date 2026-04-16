@@ -78,18 +78,10 @@ build_analysis_zones <- function(cfg, tracts_sf) {
   }
 
   if (unit %in% c("zip", "zipcode", "zcta")) {
-    zcta_year <- min(as.integer(cfg$analysis_area$tract_year), 2020L)
-    if (zcta_year != as.integer(cfg$analysis_area$tract_year)) {
-      message("Using ZCTA year ", zcta_year, " because CB ZCTA shapefiles are not available for ", cfg$analysis_area$tract_year, ".")
-    }
-
-    zcta_all <- tigris::zctas(year = zcta_year, class = "sf", cb = TRUE, progress_bar = FALSE) %>%
+    zcta_all <- tigris::zctas(year = cfg$analysis_area$tract_year, class = "sf", cb = TRUE, progress_bar = FALSE) %>%
       sf::st_transform(4326) %>%
       {
-        zcta_id_col <- dplyr::first(intersect(c("ZCTA5CE20", "ZCTA5CE10", "GEOID20", "GEOID10", "ZCTA5CE"), names(.)))
-        if (is.null(zcta_id_col) || is.na(zcta_id_col) || !nzchar(zcta_id_col)) {
-          stop("Could not identify a ZIP/ZCTA id column in tigris::zctas() output.", call. = FALSE)
-        }
+        zcta_id_col <- names(.)[grepl("^ZCTA5CE", names(.))][1]
         dplyr::transmute(., zone_id = standardize_zone_id(.data[[zcta_id_col]], "zip"), zone_name = paste0("ZIP ", standardize_zone_id(.data[[zcta_id_col]], "zip")), geometry)
       }
 

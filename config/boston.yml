@@ -93,7 +93,7 @@ auxiliary_weights:
   destination_multiplier_col: multiplier
 
 r5r_network:
-  java_memory: 16G
+  java_memory: 12G
   overwrite_networks: false
   java_active_processors: 6
 

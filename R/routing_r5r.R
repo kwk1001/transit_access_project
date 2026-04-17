@@ -227,8 +227,7 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
       destinations_df = destinations_df,
       departure_datetime = departure_datetime,
       routing_cfg = routing_cfg,
-      window_minutes = window_minutes,
-      progress = TRUE
+      window_minutes = window_minutes
     ),
     error = function(e) {
       err_msg <- conditionMessage(e)
@@ -242,8 +241,7 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
           destinations_df = destinations_df,
           departure_datetime = departure_datetime,
           routing_cfg = routing_cfg_retry,
-          window_minutes = window_minutes,
-          progress = FALSE
+          window_minutes = window_minutes
         ))
       }
       stop(e)

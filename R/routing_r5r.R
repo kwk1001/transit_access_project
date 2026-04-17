@@ -106,8 +106,15 @@ build_service_area <- function(cfg, geography_outputs) {
     sf::st_union() %>%
     sf::st_make_valid() %>%
     sf::st_set_precision(1) %>%
-    sf::st_make_valid() %>%
-    sf::st_collection_extract("POLYGON") %>%
+    sf::st_make_valid()
+
+  geom_types <- unique(as.character(sf::st_geometry_type(service_area)))
+  needs_extract <- any(geom_types %in% c("GEOMETRYCOLLECTION", "MULTISURFACE", "GEOMETRY"))
+  if (needs_extract) {
+    service_area <- sf::st_collection_extract(service_area, "POLYGON")
+  }
+
+  service_area <- service_area %>%
     sf::st_union() %>%
     sf::st_make_valid() %>%
     sf::st_transform(4326)
@@ -229,7 +236,7 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
         point_method = "fallback_zone_point_on_surface",
         representative_tract_id = NA_character_
       ) %>%
-      dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id, geometry)
+      dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id)
     zone_sf <- dplyr::bind_rows(zone_sf, fallback)
   }
 

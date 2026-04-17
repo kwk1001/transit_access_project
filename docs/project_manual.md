@@ -33,7 +33,9 @@ pipeline_main <- list(
   source_id = NULL,
   analysis_unit = NULL, # tract / zip / taz
   run_label = NULL,
-  force_all = FALSE
+  force_all = FALSE,
+  synthetic_survey_enabled = NULL,
+  synthetic_survey_max_travel_minutes = NULL
 )
 ```
 
@@ -44,6 +46,8 @@ pipeline_main <- list(
 - `analysis_unit`：运行时覆盖分析单元（不改 yaml 也能切换）
 - `run_label`：输出标签，会进入 run_id 命名
 - `force_all`：是否强制重跑全部步骤
+- `synthetic_survey_enabled`：是否启用“模拟调查 OD”模式（启用后不再依赖实际 survey）
+- `synthetic_survey_max_travel_minutes`：模拟模式下写入的参考时长参数（默认 180）
 
 ### 2.2 分步脚本
 
@@ -132,13 +136,21 @@ pipeline_main <- list(
 
 用于给 OD 权重加乘子（如人口、就业等）。
 
-## 3.11 `r5r_network`
+## 3.11 `synthetic_survey`
+
+- `enabled`：是否启用模拟调查模式
+- `max_travel_minutes`：模拟模式参考上限分钟数（默认 180）
+- `include_same_origin_destination`：是否保留同起终点 pair（默认 false）
+
+启用后，OD 构建步骤会直接基于 analysis unit 生成均匀权重 OD：每个 origin 以权重 1 指向所有 destination（默认不含自身）。
+
+## 3.12 `r5r_network`
 
 - `java_memory`
 - `overwrite_networks`
 - `java_active_processors`
 
-## 3.12 `routing`
+## 3.13 `routing`
 
 - `modes`
 - `max_walk_time`
@@ -156,7 +168,7 @@ pipeline_main <- list(
 - `unreachable_penalty_minutes`
 - `routing_windows`（与 OD 场景关联）
 
-## 3.13 `map`
+## 3.14 `map`
 
 - `default_comparison_id`
 - `default_time_window_id`
@@ -165,7 +177,7 @@ pipeline_main <- list(
 - `comparison_metrics`
 - `period_metrics`
 
-## 3.14 `gtfs_feeds`
+## 3.15 `gtfs_feeds`
 
 每个 feed 配置：
 
@@ -174,15 +186,15 @@ pipeline_main <- list(
 - `valid_end_exclusive`
 - `gtfs_files`
 
-## 3.15 `optional_covariates`
+## 3.16 `optional_covariates`
 
 - `download_population`：是否下载可选协变量（当前默认不自动下载）
 
-## 3.16 `run_management`
+## 3.17 `run_management`
 
 - `run_label`：输出标签（可选）
 
-## 3.17 `run_options`
+## 3.18 `run_options`
 
 - `force`
 - `force_downloads`

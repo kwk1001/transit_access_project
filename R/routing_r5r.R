@@ -197,7 +197,7 @@ make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
     transmute(id = as.character(zone_id), lon = lon, lat = lat)
 }
 
-compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes) {
+compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {
   r5r::travel_time_matrix(
     r5r_network = network,
     origins = origins_df,
@@ -211,12 +211,44 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     walk_speed = routing_cfg$walk_speed,
     max_rides = routing_cfg$max_rides,
     n_threads = routing_cfg$n_threads,
-    progress = TRUE
+    progress = progress
   ) %>%
     mutate(
       from_id = as.character(from_id),
       to_id = as.character(to_id)
     )
+}
+
+compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes) {
+  tryCatch(
+    compute_ttm_one_chunk(
+      network = network,
+      origins_df = origins_df,
+      destinations_df = destinations_df,
+      departure_datetime = departure_datetime,
+      routing_cfg = routing_cfg,
+      window_minutes = window_minutes,
+      progress = TRUE
+    ),
+    error = function(e) {
+      err_msg <- conditionMessage(e)
+      if (stringr::str_detect(err_msg, "ArrayIndexOutOfBoundsException|ExecutionException")) {
+        message("travel_time_matrix failed with Java execution error. Retrying with n_threads=1 for this chunk.")
+        routing_cfg_retry <- routing_cfg
+        routing_cfg_retry$n_threads <- 1
+        return(compute_ttm_one_chunk(
+          network = network,
+          origins_df = origins_df,
+          destinations_df = destinations_df,
+          departure_datetime = departure_datetime,
+          routing_cfg = routing_cfg_retry,
+          window_minutes = window_minutes,
+          progress = FALSE
+        ))
+      }
+      stop(e)
+    }
+  )
 }
 
 period_travel_time_output_path <- function(cfg) {
@@ -413,14 +445,27 @@ compute_all_travel_times <- function(cfg) {
               next
             }
 
-            ttm <- compute_ttm_one_chunk(
-              network = network,
-              origins_df = origins_chunk,
-              destinations_df = destinations_all,
-              departure_datetime = departure_datetime,
-              routing_cfg = cfg$routing,
-              window_minutes = time_window_minutes
-            )
+            destinations_needed <- destinations_all %>%
+              filter(id %in% unique(od_pairs_chunk$destination_id))
+
+            if (nrow(destinations_needed) == 0) {
+              next
+            }
+
+            destination_chunk_size <- cfg$routing$destination_chunk_size %||% 200
+            destination_chunks <- split(destinations_needed, ceiling(seq_len(nrow(destinations_needed)) / destination_chunk_size))
+
+            ttm_parts <- purrr::map(destination_chunks, function(dest_chunk) {
+              compute_ttm_one_chunk_with_retry(
+                network = network,
+                origins_df = origins_chunk,
+                destinations_df = dest_chunk,
+                departure_datetime = departure_datetime,
+                routing_cfg = cfg$routing,
+                window_minutes = time_window_minutes
+              )
+            })
+            ttm <- dplyr::bind_rows(ttm_parts)
 
             out <- ttm %>%
               mutate(from_id = as.character(from_id), to_id = as.character(to_id)) %>%
@@ -449,7 +494,6 @@ compute_all_travel_times <- function(cfg) {
       if (requireNamespace("rJava", quietly = TRUE)) {
         try(rJava::.jgc(R.gc = TRUE), silent = TRUE)
       }
-      rm(network)
       invisible(gc())
     })
   }

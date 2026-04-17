@@ -327,6 +327,16 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
     stringr::str_detect(msg_txt %||% "", "ArrayIndexOutOfBoundsException|ExecutionException")
   }
 
+  empty_ttm_result <- function() {
+    pct <- unlist(routing_cfg$percentiles %||% list(50))
+    pct <- as.integer(pct[!is.na(pct)])
+    out <- tibble::tibble(from_id = character(), to_id = character())
+    for (p in pct) {
+      out[[paste0("travel_time_p", p)]] <- numeric()
+    }
+    out
+  }
+
   emit_routing_failure <- function(initial_msg, retry_msg = NULL, retry_attempted = FALSE) {
     detail <- list(
       failure_type = "routing_chunk_failure",
@@ -496,7 +506,17 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
             }
 
             if (length(fallback_results) == 0) {
-              emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
+              msg_lines <- c(
+                "All origins in this chunk failed after per-origin fallback. Returning empty chunk output; these pairs will be treated as unreachable downstream.",
+                paste0("  feed_name: ", context$feed_name %||% "unknown"),
+                paste0("  analysis_date: ", as.character(context$analysis_date %||% NA_character_)),
+                paste0("  time_window_id / od_scenario_id: ", context$time_window_id %||% "unknown", " / ", context$od_scenario_id %||% "unknown"),
+                paste0("  origin_chunk_id / destination_chunk_id: ", context$origin_chunk_id %||% NA, " / ", context$destination_chunk_id %||% NA),
+                paste0("  initial_error: ", err_msg),
+                paste0("  retry_error: ", retry_msg)
+              )
+              message(paste(msg_lines, collapse = "\n"))
+              return(empty_ttm_result())
             }
 
             dplyr::bind_rows(fallback_results)

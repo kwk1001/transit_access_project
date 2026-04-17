@@ -197,7 +197,7 @@ make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
     transmute(id = as.character(zone_id), lon = lon, lat = lat)
 }
 
-compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes) {
+compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {
   r5r::travel_time_matrix(
     r5r_network = network,
     origins = origins_df,
@@ -211,7 +211,7 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     walk_speed = routing_cfg$walk_speed,
     max_rides = routing_cfg$max_rides,
     n_threads = routing_cfg$n_threads,
-    progress = TRUE
+    progress = progress
   ) %>%
     mutate(
       from_id = as.character(from_id),

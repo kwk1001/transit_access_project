@@ -220,6 +220,11 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       minimum_weight_share_within_origin = cfg_yaml$od_settings$minimum_weight_share_within_origin %||% 0,
       max_destinations_per_origin = cfg_yaml$od_settings$max_destinations_per_origin %||% Inf
     ),
+    synthetic_survey = list(
+      enabled = isTRUE(cfg_yaml$synthetic_survey$enabled),
+      max_travel_minutes = cfg_yaml$synthetic_survey$max_travel_minutes %||% 180,
+      include_same_origin_destination = isTRUE(cfg_yaml$synthetic_survey$include_same_origin_destination)
+    ),
     auxiliary_weights = cfg_yaml$auxiliary_weights %||% list(),
     gtfs_feeds = make_gtfs_feeds_from_yaml(cfg_yaml),
     osm = list(
@@ -237,6 +242,7 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       service_area_buffer_m = cfg_yaml$routing$service_area_buffer_m %||% 2000,
       restrict_to_service_area = isTRUE(cfg_yaml$routing$restrict_to_service_area),
       origin_chunk_size = cfg_yaml$routing$origin_chunk_size %||% 50,
+      destination_chunk_size = cfg_yaml$routing$destination_chunk_size %||% 200,
       date_strategy = cfg_yaml$routing$date_strategy %||% "all_dates",
       sample_n_dates_per_period = cfg_yaml$routing$sample_n_dates_per_period %||% 3,
       routing_windows = cfg_yaml$routing$routing_windows,
@@ -292,6 +298,11 @@ normalize_list_config <- function(cfg_raw, config_path) {
       minimum_weight_share_within_origin = cfg_raw$od_weights$minimum_weight_share_within_origin %||% 0,
       max_destinations_per_origin = cfg_raw$od_weights$max_destinations_per_origin %||% Inf
     ),
+    synthetic_survey = list(
+      enabled = isTRUE(cfg_raw$synthetic_survey$enabled),
+      max_travel_minutes = cfg_raw$synthetic_survey$max_travel_minutes %||% 180,
+      include_same_origin_destination = isTRUE(cfg_raw$synthetic_survey$include_same_origin_destination)
+    ),
     auxiliary_weights = list(
       origin_multiplier_file = NULL,
       origin_id_col = "GEOID",
@@ -316,6 +327,7 @@ normalize_list_config <- function(cfg_raw, config_path) {
       service_area_buffer_m = cfg_raw$geography$service_buffer_m,
       restrict_to_service_area = isTRUE(cfg_raw$geography$restrict_to_gtfs_service_area),
       origin_chunk_size = cfg_raw$routing$origin_batch_size,
+      destination_chunk_size = cfg_raw$routing$destination_chunk_size %||% 200,
       date_strategy = "sample_n_dates_per_period",
       sample_n_dates_per_period = 3,
       routing_windows = make_routing_windows_from_list(cfg_raw),
@@ -366,6 +378,7 @@ extract_analysis_config_for_signature <- function(cfg) {
     analysis_calendar = cfg$analysis_calendar,
     od_scenarios = cfg$od_scenarios,
     od_settings = cfg$od_settings,
+    synthetic_survey = cfg$synthetic_survey,
     auxiliary_weights = cfg$auxiliary_weights,
     gtfs_feeds = cfg$gtfs_feeds,
     osm = cfg$osm,
@@ -380,6 +393,7 @@ extract_analysis_config_for_signature <- function(cfg) {
       service_area_buffer_m = cfg$routing$service_area_buffer_m,
       restrict_to_service_area = cfg$routing$restrict_to_service_area,
       origin_chunk_size = cfg$routing$origin_chunk_size,
+      destination_chunk_size = cfg$routing$destination_chunk_size,
       date_strategy = cfg$routing$date_strategy,
       sample_n_dates_per_period = cfg$routing$sample_n_dates_per_period,
       routing_windows = cfg$routing$routing_windows,
@@ -517,6 +531,12 @@ apply_runtime_overrides <- function(cfg, overrides = list()) {
   }
   if (!is.null(overrides$force_all)) {
     cfg$run_options$force <- isTRUE(overrides$force_all)
+  }
+  if (!is.null(overrides$synthetic_survey_enabled)) {
+    cfg$synthetic_survey$enabled <- isTRUE(overrides$synthetic_survey_enabled)
+  }
+  if (!is.null(overrides$synthetic_survey_max_travel_minutes)) {
+    cfg$synthetic_survey$max_travel_minutes <- safe_numeric(overrides$synthetic_survey_max_travel_minutes)
   }
 
   sig <- compute_analysis_signature(cfg)

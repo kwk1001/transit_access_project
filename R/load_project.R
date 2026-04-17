@@ -80,6 +80,11 @@ run_download_optional_covariates <- function(cfg) {
 }
 
 run_standardize_surveys <- function(cfg, source_ids = NULL) {
+  if (isTRUE(cfg$synthetic_survey$enabled)) {
+    message("Synthetic survey mode enabled. Skipping survey standardization step.")
+    return(invisible(NULL))
+  }
+
   source_id_use <- source_ids %||% cfg$active_survey_source_id
   cfg2 <- if (identical(source_id_use, cfg$active_survey_source_id)) cfg else load_project_config(cfg$project$config_path, source_id_use)
 
@@ -168,7 +173,8 @@ write_output_run_bundle <- function(cfg) {
       n_threads = cfg$routing$n_threads
     ),
     map = cfg$map,
-    od_settings = cfg$od_settings
+    od_settings = cfg$od_settings,
+    synthetic_survey = cfg$synthetic_survey
   )
   write_json_pretty(key_params, file.path(cfg$paths$maps_dir, "run_key_parameters.json"))
   if (file.exists(cfg$project$config_path)) {

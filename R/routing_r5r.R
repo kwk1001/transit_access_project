@@ -231,6 +231,10 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
     msg
   }
 
+  is_retryable_java_error <- function(msg_txt) {
+    stringr::str_detect(msg_txt %||% "", "ArrayIndexOutOfBoundsException|ExecutionException")
+  }
+
   emit_routing_failure <- function(initial_msg, retry_msg = NULL, retry_attempted = FALSE) {
     detail <- list(
       failure_type = "routing_chunk_failure",
@@ -294,7 +298,7 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
     ),
     error = function(e) {
       err_msg <- safe_error_message(e)
-      if (stringr::str_detect(err_msg, "ArrayIndexOutOfBoundsException|ExecutionException")) {
+      if (is_retryable_java_error(err_msg)) {
         message("travel_time_matrix failed with Java execution error. Retrying with n_threads=1 for this chunk.")
         routing_cfg_retry <- routing_cfg
         routing_cfg_retry$n_threads <- 1
@@ -309,7 +313,101 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
           ),
           error = function(e_retry) {
             retry_msg <- safe_error_message(e_retry)
-            emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
+            if (!is_retryable_java_error(retry_msg)) {
+              emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
+            }
+
+            message("Chunk still failing after n_threads=1 retry. Falling back to per-origin routing for this chunk.")
+
+            origin_rows <- split(origins_df, seq_len(nrow(origins_df)))
+            fallback_results <- vector("list", length(origin_rows))
+            origin_failures <- vector("list", length(origin_rows))
+
+            for (oi in seq_along(origin_rows)) {
+              origin_one <- origin_rows[[oi]]
+              origin_id <- origin_one$id[[1]]
+
+              origin_try <- tryCatch(
+                compute_ttm_one_chunk(
+                  network = network,
+                  origins_df = origin_one,
+                  destinations_df = destinations_df,
+                  departure_datetime = departure_datetime,
+                  routing_cfg = routing_cfg_retry,
+                  window_minutes = window_minutes
+                ),
+                error = function(e_origin) {
+                  origin_msg <- safe_error_message(e_origin)
+
+                  if (!is_retryable_java_error(origin_msg) || nrow(destinations_df) <= 1) {
+                    origin_failures[[oi]] <<- list(origin_id = origin_id, error = origin_msg)
+                    return(NULL)
+                  }
+
+                  sub_size <- max(1, min(25, nrow(destinations_df)))
+                  dest_subchunks <- split(destinations_df, ceiling(seq_len(nrow(destinations_df)) / sub_size))
+                  sub_parts <- vector("list", length(dest_subchunks))
+                  sub_fail <- character()
+
+                  for (si in seq_along(dest_subchunks)) {
+                    sub_try <- tryCatch(
+                      compute_ttm_one_chunk(
+                        network = network,
+                        origins_df = origin_one,
+                        destinations_df = dest_subchunks[[si]],
+                        departure_datetime = departure_datetime,
+                        routing_cfg = routing_cfg_retry,
+                        window_minutes = window_minutes
+                      ),
+                      error = function(e_sub) {
+                        sub_fail <<- c(sub_fail, paste0("subchunk_", si, ": ", safe_error_message(e_sub)))
+                        NULL
+                      }
+                    )
+                    sub_parts[[si]] <- sub_try
+                  }
+
+                  sub_parts <- Filter(Negate(is.null), sub_parts)
+                  if (length(sub_parts) == 0) {
+                    origin_failures[[oi]] <<- list(
+                      origin_id = origin_id,
+                      error = paste(c(origin_msg, sub_fail), collapse = " | ")
+                    )
+                    return(NULL)
+                  }
+                  dplyr::bind_rows(sub_parts)
+                }
+              )
+
+              fallback_results[[oi]] <- origin_try
+            }
+
+            fallback_results <- Filter(Negate(is.null), fallback_results)
+            failed_origins <- Filter(Negate(is.null), origin_failures)
+
+            if (length(failed_origins) > 0) {
+              failed_ids <- vapply(failed_origins, function(x) as.character(x$origin_id %||% NA_character_), character(1))
+              message("Per-origin fallback still failed for ", length(failed_origins), " origin(s): ", paste(failed_ids, collapse = ", "))
+              if (!is.null(cfg) && !is.null(cfg$paths$logs_dir)) {
+                fs::dir_create(cfg$paths$logs_dir)
+                stamp2 <- format(Sys.time(), "%Y%m%d_%H%M%S", tz = "UTC")
+                fallback_log <- list(
+                  failure_type = "routing_chunk_partial_origin_failures",
+                  context = context,
+                  failed_origins = failed_origins
+                )
+                write_json_pretty(
+                  fallback_log,
+                  file.path(cfg$paths$logs_dir, paste0("routing_origin_fallback_", stamp2, "_", context$time_window_id %||% "unknown", "_chunk", context$origin_chunk_id %||% "na", "_dest", context$destination_chunk_id %||% "na", ".json"))
+                )
+              }
+            }
+
+            if (length(fallback_results) == 0) {
+              emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
+            }
+
+            dplyr::bind_rows(fallback_results)
           }
         )
         return(retry_out)

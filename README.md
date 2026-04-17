@@ -136,7 +136,7 @@ Rscript scripts/09_run_pipeline_main.R config/chicago.yml cmap_2024_2025_phase1 
 Main script CLI arguments:
 
 ```text
-Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all]
+Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all] [synthetic_survey_enabled] [synthetic_survey_max_travel_minutes]
 ```
 
 Examples:

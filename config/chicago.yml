@@ -83,18 +83,23 @@ od_scenarios:
       - time_bin: midday
         start_time: 11:00:00
         end_time: 14:00:00
-  - scenario_id: custom
-    scenario_label: Custom example window, all purposes
-    weekday_only: true
-    allowed_travel_dow: []
-    transit_only: false
-    allowed_purpose_groups: []
-    allowed_mode_groups: []
-    exclude_same_tract: true
-    time_bin_rules:
-      - time_bin: custom
-        start_time: 22:00:00
-        end_time: 22:01:00
+  # - scenario_id: custom
+  #   scenario_label: Custom example window, all purposes
+  #   weekday_only: true
+  #   allowed_travel_dow: []
+  #   transit_only: false
+  #   allowed_purpose_groups: []
+  #   allowed_mode_groups: []
+  #   exclude_same_tract: true
+  #   time_bin_rules:
+  #     - time_bin: custom
+  #       start_time: 22:00:00
+  #       end_time: 22:01:00
+
+synthetic_survey:
+  enabled: false
+  max_travel_minutes: 180
+  include_same_origin_destination: false
 
 auxiliary_weights:
   origin_multiplier_file: null

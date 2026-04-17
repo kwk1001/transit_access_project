@@ -53,6 +53,11 @@ od_scenarios:
         start_time: 07:30:00
         end_time: 09:30:00
 
+synthetic_survey:
+  enabled: false
+  max_travel_minutes: 180
+  include_same_origin_destination: false
+
 auxiliary_weights:
   origin_multiplier_file: null
   origin_id_col: GEOID
@@ -77,6 +82,7 @@ routing:
   service_area_buffer_m: 2000
   restrict_to_service_area: true
   origin_chunk_size: 50
+  destination_chunk_size: 200
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
   n_threads: 2

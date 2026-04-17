@@ -12,7 +12,7 @@ project_root <- if (!is.null(script_path)) normalizePath(file.path(dirname(scrip
 
 # Main, user-friendly knobs:
 pipeline_main <- list(
-  config_path = file.path("config", "chicago.yml"),
+  config_path = file.path("config", "boston.yml"),
   source_id = NULL,
   analysis_unit = "zip", # "tract", "zip", or "taz"
   run_label = NULL,

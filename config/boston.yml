@@ -52,6 +52,7 @@ analysis_calendar:
   weekday_only: true
   excluded_dates:
     - 2025-09-01
+    - 2025-09-02
 
 od_scenarios:
   - scenario_id: peak
@@ -93,7 +94,7 @@ auxiliary_weights:
   destination_multiplier_col: multiplier
 
 r5r_network:
-  java_memory: 12G
+  java_memory: 16G
   overwrite_networks: false
   java_active_processors: 6
 

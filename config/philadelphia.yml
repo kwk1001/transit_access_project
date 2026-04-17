@@ -91,6 +91,11 @@ od_scenarios:
   #       start_time: 06:00:00
   #       end_time: 22:00:00
 
+synthetic_survey:
+  enabled: false
+  max_travel_minutes: 180
+  include_same_origin_destination: false
+
 auxiliary_weights:
   origin_multiplier_file: null
   origin_id_col: GEOID

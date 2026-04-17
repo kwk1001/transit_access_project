@@ -52,7 +52,6 @@ analysis_calendar:
   weekday_only: true
   excluded_dates:
     - 2025-09-01
-    - 2025-09-02
 
 od_scenarios:
   - scenario_id: peak
@@ -111,10 +110,11 @@ routing:
     - 50
   service_area_buffer_m: 2000
   restrict_to_service_area: true
-  origin_chunk_size: 50
+  origin_chunk_size: 10
+  destination_chunk_size: 200
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 6
+  n_threads: 2
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak

@@ -162,6 +162,7 @@ pipeline_main <- list(
 - `service_area_buffer_m`
 - `restrict_to_service_area`
 - `origin_chunk_size`
+- `destination_chunk_size`
 - `date_strategy`
 - `sample_n_dates_per_period`
 - `n_threads`

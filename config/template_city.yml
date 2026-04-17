@@ -82,6 +82,7 @@ routing:
   service_area_buffer_m: 2000
   restrict_to_service_area: true
   origin_chunk_size: 50
+  destination_chunk_size: 200
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
   n_threads: 2

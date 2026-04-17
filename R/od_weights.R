@@ -36,6 +36,80 @@ read_standardized_survey <- function(cfg) {
   )
 }
 
+build_synthetic_uniform_od_scenario <- function(cfg, scenario) {
+  geography_outputs <- read_geography_outputs(cfg)
+  include_same <- isTRUE(cfg$synthetic_survey$include_same_origin_destination)
+
+  zone_tbl <- geography_outputs$analysis_zones %>%
+    sf::st_drop_geometry() %>%
+    transmute(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
+    filter(!is.na(zone_id), nzchar(zone_id)) %>%
+    distinct()
+
+  if (nrow(zone_tbl) == 0) {
+    stop("Synthetic survey mode requested, but no analysis zones were found.", call. = FALSE)
+  }
+
+  time_bins <- purrr::map_chr(scenario$time_bin_rules %||% list(list(time_bin = "all_day")), ~ as.character(.x$time_bin %||% "all_day"))
+  if (length(time_bins) == 0) {
+    time_bins <- "all_day"
+  }
+
+  od <- tidyr::crossing(
+    origin_id = zone_tbl$zone_id,
+    destination_id = zone_tbl$zone_id,
+    time_bin = time_bins
+  ) %>%
+    mutate(
+      origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+      destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit)
+    )
+
+  if (!include_same) {
+    od <- od %>% filter(origin_id != destination_id)
+  }
+
+  od <- od %>%
+    transmute(
+      origin_id,
+      destination_id,
+      time_bin = as.character(time_bin),
+      n_trips_raw = 1L,
+      weight_sum = 1,
+      avg_distance_miles = NA_real_,
+      avg_duration_minutes = cfg$synthetic_survey$max_travel_minutes %||% 180,
+      income_group_simple = NA_character_,
+      vehicle_group_simple = NA_character_,
+      scenario_id = as.character(scenario$scenario_id),
+      scenario_label = as.character(scenario$scenario_label),
+      source_id = cfg$active_survey_source_id
+    )
+
+  od <- prune_od_table(od, cfg)
+  od <- apply_auxiliary_od_multipliers(od, cfg)
+
+  origin_marginals <- od %>%
+    group_by(source_id, scenario_id, origin_id) %>%
+    summarise(origin_total_weight = sum(weight_sum_adjusted, na.rm = TRUE), .groups = "drop")
+
+  dest_marginals <- od %>%
+    group_by(source_id, scenario_id, destination_id) %>%
+    summarise(destination_total_weight = sum(weight_sum_adjusted, na.rm = TRUE), .groups = "drop")
+
+  od <- od %>%
+    left_join(origin_marginals, by = c("source_id", "scenario_id", "origin_id")) %>%
+    left_join(dest_marginals, by = c("source_id", "scenario_id", "destination_id"))
+
+  top_n <- cfg$map$od_top_pairs_max %||% 500
+
+  list(
+    od = od,
+    origin_marginals = origin_marginals,
+    destination_marginals = dest_marginals,
+    top_pairs = od %>% arrange(desc(weight_sum_adjusted)) %>% slice_head(n = top_n)
+  )
+}
+
 study_area_county_fips <- function(cfg) {
   options(tigris_use_cache = TRUE)
   purrr::map_chr(cfg$analysis_area$counties, function(x) {
@@ -220,10 +294,14 @@ build_one_od_scenario <- function(trips_df, scenario, cfg) {
 }
 
 build_all_od_weights <- function(cfg) {
-  survey_std <- read_standardized_survey(cfg)
-  trips_std <- survey_std$trips
-
-  scenario_results <- purrr::map(cfg$od_scenarios, ~ build_one_od_scenario(trips_std, .x, cfg))
+  scenario_results <- if (isTRUE(cfg$synthetic_survey$enabled)) {
+    message("Synthetic survey mode enabled: generating uniform OD pairs from analysis zones.")
+    purrr::map(cfg$od_scenarios, ~ build_synthetic_uniform_od_scenario(cfg, .x))
+  } else {
+    survey_std <- read_standardized_survey(cfg)
+    trips_std <- survey_std$trips
+    purrr::map(cfg$od_scenarios, ~ build_one_od_scenario(trips_std, .x, cfg))
+  }
 
   od_all <- purrr::map_dfr(scenario_results, "od") %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit), destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit))
   origin_all <- purrr::map_dfr(scenario_results, "origin_marginals") %>% mutate(origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit))

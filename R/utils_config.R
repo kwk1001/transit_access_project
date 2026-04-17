@@ -220,6 +220,11 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       minimum_weight_share_within_origin = cfg_yaml$od_settings$minimum_weight_share_within_origin %||% 0,
       max_destinations_per_origin = cfg_yaml$od_settings$max_destinations_per_origin %||% Inf
     ),
+    synthetic_survey = list(
+      enabled = isTRUE(cfg_yaml$synthetic_survey$enabled),
+      max_travel_minutes = cfg_yaml$synthetic_survey$max_travel_minutes %||% 180,
+      include_same_origin_destination = isTRUE(cfg_yaml$synthetic_survey$include_same_origin_destination)
+    ),
     auxiliary_weights = cfg_yaml$auxiliary_weights %||% list(),
     gtfs_feeds = make_gtfs_feeds_from_yaml(cfg_yaml),
     osm = list(
@@ -291,6 +296,11 @@ normalize_list_config <- function(cfg_raw, config_path) {
       minimum_weight = cfg_raw$od_weights$minimum_weight %||% 0,
       minimum_weight_share_within_origin = cfg_raw$od_weights$minimum_weight_share_within_origin %||% 0,
       max_destinations_per_origin = cfg_raw$od_weights$max_destinations_per_origin %||% Inf
+    ),
+    synthetic_survey = list(
+      enabled = isTRUE(cfg_raw$synthetic_survey$enabled),
+      max_travel_minutes = cfg_raw$synthetic_survey$max_travel_minutes %||% 180,
+      include_same_origin_destination = isTRUE(cfg_raw$synthetic_survey$include_same_origin_destination)
     ),
     auxiliary_weights = list(
       origin_multiplier_file = NULL,
@@ -366,6 +376,7 @@ extract_analysis_config_for_signature <- function(cfg) {
     analysis_calendar = cfg$analysis_calendar,
     od_scenarios = cfg$od_scenarios,
     od_settings = cfg$od_settings,
+    synthetic_survey = cfg$synthetic_survey,
     auxiliary_weights = cfg$auxiliary_weights,
     gtfs_feeds = cfg$gtfs_feeds,
     osm = cfg$osm,
@@ -517,6 +528,12 @@ apply_runtime_overrides <- function(cfg, overrides = list()) {
   }
   if (!is.null(overrides$force_all)) {
     cfg$run_options$force <- isTRUE(overrides$force_all)
+  }
+  if (!is.null(overrides$synthetic_survey_enabled)) {
+    cfg$synthetic_survey$enabled <- isTRUE(overrides$synthetic_survey_enabled)
+  }
+  if (!is.null(overrides$synthetic_survey_max_travel_minutes)) {
+    cfg$synthetic_survey$max_travel_minutes <- safe_numeric(overrides$synthetic_survey_max_travel_minutes)
   }
 
   sig <- compute_analysis_signature(cfg)

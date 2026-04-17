@@ -219,6 +219,106 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     )
 }
 
+compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, cfg = NULL, context = list()) {
+  safe_error_message <- function(err_obj) {
+    msg <- tryCatch(base::conditionMessage(err_obj), error = function(...) NA_character_)
+    if (is.na(msg) || !nzchar(msg)) {
+      msg <- tryCatch(paste0(err_obj), error = function(...) NA_character_)
+    }
+    if (is.na(msg) || !nzchar(msg)) {
+      msg <- tryCatch(paste(capture.output(print(err_obj)), collapse = " "), error = function(...) "unknown error")
+    }
+    msg
+  }
+
+  emit_routing_failure <- function(initial_msg, retry_msg = NULL, retry_attempted = FALSE) {
+    detail <- list(
+      failure_type = "routing_chunk_failure",
+      feed_name = context$feed_name %||% NA_character_,
+      analysis_date = as.character(context$analysis_date %||% NA_character_),
+      period_id = as.character(context$period_id %||% NA_character_),
+      period_label = as.character(context$period_label %||% NA_character_),
+      time_window_id = as.character(context$time_window_id %||% NA_character_),
+      od_scenario_id = as.character(context$od_scenario_id %||% NA_character_),
+      origin_chunk_id = context$origin_chunk_id %||% NA_integer_,
+      destination_chunk_id = context$destination_chunk_id %||% NA_integer_,
+      origins_in_chunk = nrow(origins_df),
+      destinations_in_chunk = nrow(destinations_df),
+      od_pairs_in_chunk = context$od_pairs_in_chunk %||% NA_integer_,
+      departure_datetime = as.character(departure_datetime),
+      window_minutes = as.numeric(window_minutes),
+      configured_n_threads = routing_cfg$n_threads %||% NA,
+      retry_attempted = retry_attempted,
+      retry_n_threads = if (retry_attempted) 1 else NA,
+      initial_error = initial_msg,
+      retry_error = retry_msg
+    )
+
+    if (!is.null(cfg) && !is.null(cfg$paths$logs_dir)) {
+      fs::dir_create(cfg$paths$logs_dir)
+      stamp <- format(Sys.time(), "%Y%m%d_%H%M%S", tz = "UTC")
+      log_path <- file.path(cfg$paths$logs_dir, paste0("routing_error_", stamp, "_", context$time_window_id %||% "unknown", "_chunk", context$origin_chunk_id %||% "na", "_dest", context$destination_chunk_id %||% "na", ".json"))
+      write_json_pretty(detail, log_path)
+      detail$log_path <- log_path
+    }
+
+    msg_lines <- c(
+      "Routing chunk failed with detailed context:",
+      paste0("  feed_name: ", detail$feed_name),
+      paste0("  analysis_date: ", detail$analysis_date, " (period ", detail$period_id, ")"),
+      paste0("  time_window_id / od_scenario_id: ", detail$time_window_id, " / ", detail$od_scenario_id),
+      paste0("  origin_chunk_id / destination_chunk_id: ", detail$origin_chunk_id, " / ", detail$destination_chunk_id),
+      paste0("  origins_in_chunk / destinations_in_chunk / od_pairs_in_chunk: ", detail$origins_in_chunk, " / ", detail$destinations_in_chunk, " / ", detail$od_pairs_in_chunk),
+      paste0("  departure_datetime: ", detail$departure_datetime, " (window_minutes=", detail$window_minutes, ")"),
+      paste0("  configured_n_threads: ", detail$configured_n_threads, ", retry_attempted: ", detail$retry_attempted),
+      paste0("  initial_error: ", detail$initial_error)
+    )
+    if (!is.null(retry_msg)) {
+      msg_lines <- c(msg_lines, paste0("  retry_error: ", retry_msg))
+    }
+    if (!is.null(detail$log_path)) {
+      msg_lines <- c(msg_lines, paste0("  detailed_log: ", detail$log_path))
+    }
+
+    stop(paste(msg_lines, collapse = "\n"), call. = FALSE)
+  }
+
+  tryCatch(
+    compute_ttm_one_chunk(
+      network = network,
+      origins_df = origins_df,
+      destinations_df = destinations_df,
+      departure_datetime = departure_datetime,
+      routing_cfg = routing_cfg,
+      window_minutes = window_minutes
+    ),
+    error = function(e) {
+      err_msg <- safe_error_message(e)
+      if (stringr::str_detect(err_msg, "ArrayIndexOutOfBoundsException|ExecutionException")) {
+        message("travel_time_matrix failed with Java execution error. Retrying with n_threads=1 for this chunk.")
+        routing_cfg_retry <- routing_cfg
+        routing_cfg_retry$n_threads <- 1
+        retry_out <- tryCatch(
+          compute_ttm_one_chunk(
+            network = network,
+            origins_df = origins_df,
+            destinations_df = destinations_df,
+            departure_datetime = departure_datetime,
+            routing_cfg = routing_cfg_retry,
+            window_minutes = window_minutes
+          ),
+          error = function(e_retry) {
+            retry_msg <- safe_error_message(e_retry)
+            emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
+          }
+        )
+        return(retry_out)
+      }
+      emit_routing_failure(initial_msg = err_msg, retry_attempted = FALSE)
+    }
+  )
+}
+
 period_travel_time_output_path <- function(cfg) {
   file.path(cfg$paths$travel_time_dir, "period_travel_times.csv.gz")
 }
@@ -413,14 +513,39 @@ compute_all_travel_times <- function(cfg) {
               next
             }
 
-            ttm <- compute_ttm_one_chunk(
-              network = network,
-              origins_df = origins_chunk,
-              destinations_df = destinations_all,
-              departure_datetime = departure_datetime,
-              routing_cfg = cfg$routing,
-              window_minutes = time_window_minutes
-            )
+            destinations_needed <- destinations_all %>%
+              filter(id %in% unique(od_pairs_chunk$destination_id))
+
+            if (nrow(destinations_needed) == 0) {
+              next
+            }
+
+            destination_chunk_size <- cfg$routing$destination_chunk_size %||% 200
+            destination_chunks <- split(destinations_needed, ceiling(seq_len(nrow(destinations_needed)) / destination_chunk_size))
+
+            ttm_parts <- purrr::imap(destination_chunks, function(dest_chunk, dest_chunk_i) {
+              compute_ttm_one_chunk_with_retry(
+                network = network,
+                origins_df = origins_chunk,
+                destinations_df = dest_chunk,
+                departure_datetime = departure_datetime,
+                routing_cfg = cfg$routing,
+                window_minutes = time_window_minutes,
+                cfg = cfg,
+                context = list(
+                  feed_name = date_row$feed_name,
+                  analysis_date = date_row$analysis_date,
+                  period_id = date_row$period_id,
+                  period_label = date_row$period_label,
+                  time_window_id = win$time_window_id,
+                  od_scenario_id = win$od_scenario_id,
+                  origin_chunk_id = chunk_i,
+                  destination_chunk_id = as.integer(dest_chunk_i),
+                  od_pairs_in_chunk = nrow(od_pairs_chunk)
+                )
+              )
+            })
+            ttm <- dplyr::bind_rows(ttm_parts)
 
             out <- ttm %>%
               mutate(from_id = as.character(from_id), to_id = as.character(to_id)) %>%
@@ -449,7 +574,6 @@ compute_all_travel_times <- function(cfg) {
       if (requireNamespace("rJava", quietly = TRUE)) {
         try(rJava::.jgc(R.gc = TRUE), silent = TRUE)
       }
-      rm(network)
       invisible(gc())
     })
   }

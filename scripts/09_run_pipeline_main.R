@@ -16,17 +16,21 @@ pipeline_main <- list(
   source_id = NULL,
   analysis_unit = "zip", # "tract", "zip", or "taz"
   run_label = NULL,
-  force_all = FALSE
+  force_all = FALSE,
+  synthetic_survey_enabled = NULL,
+  synthetic_survey_max_travel_minutes = NULL
 )
 
 # Optional CLI override:
-# Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all]
+# Rscript scripts/09_run_pipeline_main.R <config_path> [source_id] [analysis_unit] [run_label] [force_all] [synthetic_survey_enabled] [synthetic_survey_max_travel_minutes]
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) >= 1 && nzchar(args[[1]])) pipeline_main$config_path <- args[[1]]
 if (length(args) >= 2 && nzchar(args[[2]])) pipeline_main$source_id <- args[[2]]
 if (length(args) >= 3 && nzchar(args[[3]])) pipeline_main$analysis_unit <- tolower(args[[3]])
 if (length(args) >= 4 && nzchar(args[[4]])) pipeline_main$run_label <- args[[4]]
 if (length(args) >= 5 && nzchar(args[[5]])) pipeline_main$force_all <- tolower(args[[5]]) %in% c("1", "true", "t", "yes", "y")
+if (length(args) >= 6 && nzchar(args[[6]])) pipeline_main$synthetic_survey_enabled <- tolower(args[[6]]) %in% c("1", "true", "t", "yes", "y")
+if (length(args) >= 7 && nzchar(args[[7]])) pipeline_main$synthetic_survey_max_travel_minutes <- suppressWarnings(as.numeric(args[[7]]))
 
 if (!fs::is_absolute_path(pipeline_main$config_path)) {
   pipeline_main$config_path <- normalizePath(file.path(project_root, pipeline_main$config_path), winslash = "/", mustWork = FALSE)
@@ -39,7 +43,7 @@ source(file.path(project_root, "R", "load_project.R"))
 load_project(project_root)
 
 cfg <- load_project_config(pipeline_main$config_path, pipeline_main$source_id)
-cfg <- apply_runtime_overrides(cfg, pipeline_main[c("analysis_unit", "run_label", "force_all")])
+cfg <- apply_runtime_overrides(cfg, pipeline_main[c("analysis_unit", "run_label", "force_all", "synthetic_survey_enabled", "synthetic_survey_max_travel_minutes")])
 
 on.exit({
   try(cleanup_empty_run_dirs(cfg), silent = TRUE)

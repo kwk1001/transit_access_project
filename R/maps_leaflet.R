@@ -271,7 +271,7 @@ build_od_lines_sf <- function(top_pairs_df, zone_centroids_sf, zones_sf, max_pai
     )
 
   sf::st_as_sf(lines_df, sf_column_name = "geometry", crs = 4326) %>%
-    select(scenario_id, scenario_label, time_bin, rank, weight_sum, weight_sum_adjusted, weight_use, origin_id, destination_id, origin_name, destination_name, line_weight_base, geometry)
+    select(scenario_id, scenario_label, time_bin, rank, weight_sum, weight_sum_adjusted, weight_use, origin_id, destination_id, origin_name, destination_name, line_weight_base)
 }
 
 

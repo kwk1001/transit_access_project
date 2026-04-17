@@ -151,21 +151,106 @@ get_active_geography_for_routing <- function(cfg) {
       unique()
     if (length(served_zone_ids) == 0) served_zone_ids <- unique(base$analysis_zone_centroids$zone_id)
 
-    return(list(
+    out <- list(
       tracts = served_tracts,
       tract_centroids = served_centroids,
       analysis_zones = base$analysis_zones %>% filter(zone_id %in% served_zone_ids),
-      analysis_zone_centroids = base$analysis_zone_centroids %>% filter(zone_id %in% served_zone_ids)
-    ))
+      analysis_zone_centroids = base$analysis_zone_centroids %>% filter(zone_id %in% served_zone_ids),
+      tract_to_zone = base$tract_to_zone %>% filter(zone_id %in% served_zone_ids)
+    )
+    out$routing_zone_centroids <- build_zone_centroids_for_routing(out, cfg)
+    return(out)
   }
 
   base <- read_geography_outputs(cfg)
-  list(
+  out <- list(
     tracts = base$tracts,
     tract_centroids = base$tract_centroids,
     analysis_zones = base$analysis_zones,
-    analysis_zone_centroids = base$analysis_zone_centroids
+    analysis_zone_centroids = base$analysis_zone_centroids,
+    tract_to_zone = base$tract_to_zone
   )
+  out$routing_zone_centroids <- build_zone_centroids_for_routing(out, cfg)
+  out
+}
+
+build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
+  unit <- normalize_analysis_unit(cfg$geography$analysis_unit)
+  zone_centroids_default <- geography_outputs$analysis_zone_centroids %>%
+    mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
+    sf::st_transform(4326)
+
+  if (unit != "zip") {
+    return(zone_centroids_default)
+  }
+
+  tract_centroids <- geography_outputs$tract_centroids %>%
+    standardize_tract_id_cols(c("tract_id")) %>%
+    sf::st_transform(4326) %>%
+    mutate(
+      lon = sf::st_coordinates(.)[, 1],
+      lat = sf::st_coordinates(.)[, 2]
+    ) %>%
+    sf::st_drop_geometry() %>%
+    transmute(tract_id = standardize_geoid11(tract_id), lon, lat)
+
+  tract_to_zone <- geography_outputs$tract_to_zone %>%
+    transmute(tract_id = standardize_geoid11(tract_id), zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit))
+
+  zone_points_tbl <- tract_to_zone %>%
+    inner_join(tract_centroids, by = "tract_id") %>%
+    filter(!is.na(zone_id), !is.na(lon), !is.na(lat)) %>%
+    group_by(zone_id) %>%
+    group_modify(~ {
+      cx <- mean(.x$lon, na.rm = TRUE)
+      cy <- mean(.x$lat, na.rm = TRUE)
+      d2 <- (.x$lon - cx)^2 + (.x$lat - cy)^2
+      idx <- which.min(d2)
+      tibble(
+        lon = .x$lon[[idx]],
+        lat = .x$lat[[idx]],
+        n_tracts = nrow(.x),
+        point_method = "nearest_tract_centroid_to_zone_mean",
+        representative_tract_id = .x$tract_id[[idx]]
+      )
+    }) %>%
+    ungroup()
+
+  zone_sf <- sf::st_as_sf(zone_points_tbl, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+
+  missing_zone_ids <- setdiff(unique(zone_centroids_default$zone_id), unique(zone_sf$zone_id))
+  if (length(missing_zone_ids) > 0) {
+    fallback <- zone_centroids_default %>%
+      filter(zone_id %in% missing_zone_ids) %>%
+      mutate(
+        lon = sf::st_coordinates(.)[, 1],
+        lat = sf::st_coordinates(.)[, 2],
+        n_tracts = NA_integer_,
+        point_method = "fallback_zone_point_on_surface",
+        representative_tract_id = NA_character_
+      ) %>%
+      dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id, geometry)
+    zone_sf <- dplyr::bind_rows(zone_sf, fallback)
+  }
+
+  if (!is.null(cfg$paths$logs_dir)) {
+    fs::dir_create(cfg$paths$logs_dir)
+    qc_tbl <- zone_sf %>%
+      sf::st_drop_geometry() %>%
+      transmute(
+        zone_id,
+        analysis_unit = unit,
+        lon,
+        lat,
+        n_tracts,
+        point_method,
+        representative_tract_id,
+        is_fallback = point_method == "fallback_zone_point_on_surface"
+      )
+    readr::write_csv(qc_tbl, file.path(cfg$paths$logs_dir, "zone_point_qc.csv"))
+  }
+
+  zone_sf
 }
 
 choose_routing_dates <- function(cfg) {
@@ -433,7 +518,7 @@ expected_daily_output_paths <- function(cfg, od_all, geography_outputs, routing_
     win <- windows_tbl[win_i, ]
     od_use <- od_all %>% filter(scenario_id == win$od_scenario_id)
     origin_ids <- unique(od_use$origin_id)
-    origins_all <- make_routing_points(geography_outputs$analysis_zone_centroids, origin_ids, cfg)
+    origins_all <- make_routing_points(geography_outputs$routing_zone_centroids %||% geography_outputs$analysis_zone_centroids, origin_ids, cfg)
     n_chunks <- if (nrow(origins_all) == 0) 0 else ceiling(nrow(origins_all) / cfg$routing$origin_chunk_size)
 
     if (n_chunks == 0) {
@@ -568,8 +653,8 @@ compute_all_travel_times <- function(cfg) {
         origin_ids <- unique(od_use$origin_id)
         destination_ids <- unique(od_use$destination_id)
 
-        origins_all <- make_routing_points(geography_outputs$analysis_zone_centroids, origin_ids, cfg)
-        destinations_all <- make_routing_points(geography_outputs$analysis_zone_centroids, destination_ids, cfg)
+        origins_all <- make_routing_points(geography_outputs$routing_zone_centroids %||% geography_outputs$analysis_zone_centroids, origin_ids, cfg)
+        destinations_all <- make_routing_points(geography_outputs$routing_zone_centroids %||% geography_outputs$analysis_zone_centroids, destination_ids, cfg)
 
         if (nrow(origins_all) == 0 || nrow(destinations_all) == 0) {
           next

@@ -29,14 +29,10 @@ analysis_area:
       county: Bristol
     - state: MA
       county: Worcester
-    - state: MA
-      county: Rockingham
-    - state: NH
-      county: Hillsborough
 
 spatial:
-  analysis_unit: tract
-  unit_label: Census tract
+  analysis_unit: zip
+  unit_label: ZIP code
   zcta_year: 2020
   zcta_id_field: null
   zip_assignment_method: tract_centroid
@@ -61,17 +57,17 @@ osm:
 
 study_periods:
   - period_id: P1
-    period_label: 2025-08-04_to_2025-08-25
-    period_start: 2025-08-04
-    period_end_exclusive: 2025-08-25
+    period_label: 2025-08-18_to_2025-09-15
+    period_start: 2025-08-18
+    period_end_exclusive: 2025-09-15
   - period_id: P2
-    period_label: 2025-08-25_to_2025-09-08
-    period_start: 2025-08-25
-    period_end_exclusive: 2025-09-08
+    period_label: 2025-09-15_to_2025-10-20
+    period_start: 2025-09-15
+    period_end_exclusive: 2025-10-20
   - period_id: P3
-    period_label: 2025-09-08_to_2025-09-29
-    period_start: 2025-09-08
-    period_end_exclusive: 2025-09-29
+    period_label: 2025-10-20_to_2025-12-13
+    period_start: 2025-10-20
+    period_end_exclusive: 2025-12-13
 
 analysis_calendar:
   weekday_only: true
@@ -113,8 +109,8 @@ auxiliary_weights:
 
 r5r_network:
   java_memory: 12G
-  overwrite_networks: false
-  java_active_processors: 2
+  overwrite_networks: true
+  java_active_processors: 4
 
 routing:
   modes:
@@ -129,10 +125,10 @@ routing:
     - 50
   service_area_buffer_m: 2000
   restrict_to_service_area: true
-  origin_chunk_size: 50
+  origin_chunk_size: 30
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 2
+  n_threads: 1
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak
@@ -163,16 +159,11 @@ map:
     - share_accessible_45min_weighted
 
 gtfs_feeds:
-  - feed_name: MBTA_0807
-    valid_start: 2025-08-04
-    valid_end_exclusive: 2025-08-29
+  - feed_name: MBTA_0825
+    valid_start: 2025-08-18
+    valid_end_exclusive: 2025-12-14
     gtfs_files:
-      - data/raw/gtfs/boston/MBTA-08-07.zip
-  - feed_name: MBTA_0829
-    valid_start: 2025-08-29
-    valid_end_exclusive: 2025-10-31
-    gtfs_files:
-      - data/raw/gtfs/boston/MBTA-08-29.zip
+      - data/raw/gtfs/boston/MBTA-08-25.zip
 
 optional_covariates:
   download_population: false

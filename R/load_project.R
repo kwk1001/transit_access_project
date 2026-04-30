@@ -62,7 +62,11 @@ gtfs_outputs_exist <- function(cfg) {
 }
 
 analysis_geography_outputs_exist <- function(cfg) {
-  required_files <- c(cfg$paths$zones_path, cfg$paths$zone_centroids_path, cfg$paths$zone_lookup_path)
+  required_files <- c(
+    file.path(cfg$paths$geography_dir, "analysis_zones.gpkg"),
+    file.path(cfg$paths$geography_dir, "analysis_zone_centroids.gpkg"),
+    file.path(cfg$paths$geography_dir, "tract_to_analysis_zone.csv")
+  )
   if (isTRUE(cfg$geography$restrict_to_gtfs_service_area)) {
     required_files <- c(required_files, cfg$paths$service_area_path, cfg$paths$zones_served_path, cfg$paths$zone_centroids_served_path)
   }
@@ -95,15 +99,14 @@ run_download_geography <- function(cfg) {
 
   if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_downloads) && have_base_geo && have_osm && have_analysis_geo) {
     message("Geography and OSM already prepared for run ", cfg$run$run_id, ". Skipping download step.")
-    return(read_analysis_geography(cfg, served = isTRUE(cfg$geography$restrict_to_gtfs_service_area)))
+    return(get_active_geography_for_routing(cfg))
   }
 
   message("Downloading tract and county geography for ", cfg$project$city_label, "...")
   download_osm_pbf_if_needed(cfg)
   geography_outputs <- download_county_tract_geography(cfg)
   build_service_area(cfg, geography_outputs)
-  build_analysis_geography(cfg, geography_outputs)
-  out <- read_analysis_geography(cfg, served = isTRUE(cfg$geography$restrict_to_gtfs_service_area))
+  out <- get_active_geography_for_routing(cfg)
   write_run_metadata(cfg)
   invisible(out)
 }

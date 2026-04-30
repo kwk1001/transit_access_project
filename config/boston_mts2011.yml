@@ -29,7 +29,7 @@ analysis_area:
       county: Bristol
     - state: MA
       county: Worcester
-    - state: MA
+    - state: NH
       county: Rockingham
     - state: NH
       county: Hillsborough
@@ -114,7 +114,7 @@ auxiliary_weights:
 r5r_network:
   java_memory: 12G
   overwrite_networks: false
-  java_active_processors: 2
+  java_active_processors: 4
 
 routing:
   modes:
@@ -129,10 +129,10 @@ routing:
     - 50
   service_area_buffer_m: 2000
   restrict_to_service_area: true
-  origin_chunk_size: 50
+  origin_chunk_size: 80
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 2
+  n_threads: 4
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak

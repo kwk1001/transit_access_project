@@ -27,6 +27,17 @@ standardize_geoid11 <- function(x) {
   ifelse(is.na(x_chr), NA_character_, stringr::str_pad(x_chr, width = 11, side = "left", pad = "0"))
 }
 
+standardize_geoid5 <- function(x) {
+  if (is.null(x)) {
+    return(character())
+  }
+
+  x_chr <- as.character(x)
+  x_chr <- stringr::str_replace_all(x_chr, "[^0-9]", "")
+  x_chr[x_chr == ""] <- NA_character_
+  ifelse(is.na(x_chr), NA_character_, stringr::str_pad(x_chr, width = 5, side = "left", pad = "0"))
+}
+
 standardize_zone_id <- function(x, unit = "tract") {
   unit_use <- normalize_analysis_unit(unit)
   x_chr <- as.character(x)

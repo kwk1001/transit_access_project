@@ -280,13 +280,37 @@ choose_routing_dates <- function(cfg) {
 
 make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
   zone_ids <- standardize_zone_id(zone_ids, cfg$geography$analysis_unit)
-  zone_centroids_sf %>%
+  out <- zone_centroids_sf %>%
     mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
     filter(zone_id %in% zone_ids) %>%
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
-    transmute(id = as.character(zone_id), lon = lon, lat = lat)
+    transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat)) %>%
+    distinct(id, .keep_all = TRUE)
+
+  out_valid <- out %>%
+    filter(
+      !is.na(id),
+      !is.na(lon), !is.na(lat),
+      is.finite(lon), is.finite(lat),
+      lon >= -180, lon <= 180,
+      lat >= -90, lat <= 90
+    )
+
+  dropped <- anti_join(out, out_valid, by = "id")
+  if (nrow(dropped) > 0) {
+    dropped_ids <- paste(head(dropped$id, 50), collapse = ", ")
+    warning(
+      paste0(
+        "Dropped ", nrow(dropped),
+        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids
+      ),
+      call. = FALSE
+    )
+  }
+
+  out_valid
 }
 
 compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {

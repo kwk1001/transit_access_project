@@ -227,11 +227,14 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
 
   missing_zone_ids <- setdiff(unique(zone_centroids_default$zone_id), unique(zone_sf$zone_id))
   if (length(missing_zone_ids) > 0) {
-    fallback <- geography_outputs$analysis_zones %>%
+    fallback_base <- geography_outputs$analysis_zones %>%
       filter(zone_id %in% missing_zone_ids) %>%
       sf::st_make_valid() %>%
-      suppressWarnings(sf::st_point_on_surface(.)) %>%
-      sf::st_transform(4326) %>%
+      sf::st_transform(4326)
+    fallback_pts <- suppressWarnings(sf::st_point_on_surface(sf::st_geometry(fallback_base)))
+    sf::st_geometry(fallback_base) <- fallback_pts
+
+    fallback <- fallback_base %>%
       mutate(
         lon = sf::st_coordinates(.)[, 1],
         lat = sf::st_coordinates(.)[, 2],

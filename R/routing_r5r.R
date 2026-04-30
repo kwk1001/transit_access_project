@@ -286,10 +286,9 @@ make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
-    transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat)) %>%
-    distinct(id, .keep_all = TRUE)
+    transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat))
 
-  out_valid <- out %>%
+  out_valid_rows <- out %>%
     filter(
       !is.na(id),
       !is.na(lon), !is.na(lat),
@@ -298,13 +297,17 @@ make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
       lat >= -90, lat <= 90
     )
 
-  dropped <- anti_join(out, out_valid, by = "id")
-  if (nrow(dropped) > 0) {
-    dropped_ids <- paste(head(dropped$id, 50), collapse = ", ")
+  out_valid <- out_valid_rows %>% distinct(id, .keep_all = TRUE)
+
+  dropped_ids <- out %>%
+    distinct(id) %>%
+    anti_join(out_valid %>% distinct(id), by = "id")
+  if (nrow(dropped_ids) > 0) {
+    dropped_ids_txt <- paste(head(dropped_ids$id, 50), collapse = ", ")
     warning(
       paste0(
-        "Dropped ", nrow(dropped),
-        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids
+        "Dropped ", nrow(dropped_ids),
+        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids_txt
       ),
       call. = FALSE
     )

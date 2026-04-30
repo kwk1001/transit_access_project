@@ -56,8 +56,8 @@ spatial:
     raw_trip_destination_col: null
 
 osm:
-  download_url: https://download.geofabrik.de/north-america/us/massachusetts-latest.osm.pbf
-  local_pbf_path: data/raw/osm/boston/massachusetts-latest.osm.pbf
+  download_url: https://download.geofabrik.de/north-america/us/northeast-latest.osm.pbf
+  local_pbf_path: data/raw/osm/boston/us-northeast-latest.osm.pbf
 
 study_periods:
   - period_id: P1

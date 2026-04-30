@@ -34,33 +34,66 @@ peek_java_config <- function(config_path, default_memory = "12G", default_active
     return(out)
   }
 
+  get_nested <- function(x, path, default = NULL) {
+    cur <- x
+    for (nm in path) {
+      if (!is.list(cur) || is.null(cur[[nm]])) {
+        return(default)
+      }
+      cur <- cur[[nm]]
+    }
+    cur
+  }
+
+  apply_values <- function(cfg_obj) {
+    mem <- get_nested(cfg_obj, c("r5r_network", "java_memory"))
+    ap <- get_nested(cfg_obj, c("r5r_network", "java_active_processors"))
+
+    if (is.null(mem)) mem <- get_nested(cfg_obj, c("routing", "java_memory"))
+    if (is.null(ap)) ap <- get_nested(cfg_obj, c("routing", "java_active_processors"))
+
+    if (!is.null(mem) && nzchar(as.character(mem))) out$java_memory <<- as.character(mem)
+    if (!is.null(ap) && is.finite(suppressWarnings(as.numeric(ap)))) out$java_active_processors <<- as.integer(ap)
+  }
+
   ext <- tolower(tools::file_ext(config_path))
 
   if (ext == "r") {
     env <- new.env(parent = baseenv())
     try(sys.source(config_path, envir = env), silent = TRUE)
-    cfg <- env$project_config
-    if (is.list(cfg) && is.list(cfg$routing)) {
-      mem <- cfg$routing$java_memory
-      ap <- cfg$routing$java_active_processors
-      if (!is.null(mem) && nzchar(as.character(mem))) out$java_memory <- as.character(mem)
-      if (!is.null(ap) && is.finite(suppressWarnings(as.numeric(ap)))) out$java_active_processors <- as.integer(ap)
+    cfg <- NULL
+    if (exists("project_config", envir = env, inherits = FALSE)) cfg <- env$project_config
+    if (is.null(cfg) && exists("cfg", envir = env, inherits = FALSE)) cfg <- env$cfg
+    if (is.list(cfg)) {
+      apply_values(cfg)
     }
     return(out)
   }
 
   if (ext %in% c("yml", "yaml")) {
-    lines <- readLines(config_path, warn = FALSE, encoding = "UTF-8")
-    mem_line <- grep("^\\s*java_memory\\s*:", lines, value = TRUE)
-    ap_line <- grep("^\\s*java_active_processors\\s*:", lines, value = TRUE)
-    if (length(mem_line) > 0) {
-      mem <- sub("^\\s*java_memory\\s*:\\s*", "", mem_line[[1]])
-      mem <- trimws(gsub("[\"']", "", mem))
-      if (nzchar(mem)) out$java_memory <- mem
+    cfg_yaml <- NULL
+    if (requireNamespace("yaml", quietly = TRUE)) {
+      cfg_yaml <- tryCatch(yaml::read_yaml(config_path), error = function(e) NULL)
     }
-    if (length(ap_line) > 0) {
-      ap <- suppressWarnings(as.integer(trimws(sub("^\\s*java_active_processors\\s*:\\s*", "", ap_line[[1]]))))
-      if (!is.na(ap) && ap > 0) out$java_active_processors <- ap
+    if (is.list(cfg_yaml)) {
+      apply_values(cfg_yaml)
+      return(out)
+    }
+
+    lines <- readLines(config_path, warn = FALSE, encoding = "UTF-8")
+    active_section <- NULL
+    for (ln in lines) {
+      if (grepl("^[A-Za-z0-9_]+\\s*:\\s*$", ln)) {
+        active_section <- sub("\\s*:.*$", "", trimws(ln))
+      }
+      if (identical(active_section, "r5r_network") && grepl("^\\s+java_memory\\s*:", ln)) {
+        mem <- trimws(gsub("[\"']", "", sub("^\\s*java_memory\\s*:\\s*", "", ln)))
+        if (nzchar(mem)) out$java_memory <- mem
+      }
+      if (identical(active_section, "r5r_network") && grepl("^\\s+java_active_processors\\s*:", ln)) {
+        ap <- suppressWarnings(as.integer(trimws(sub("^\\s*java_active_processors\\s*:\\s*", "", ln))))
+        if (!is.na(ap) && ap > 0) out$java_active_processors <- ap
+      }
     }
   }
 
@@ -72,11 +105,6 @@ configure_java_for_r5r <- function(java_memory = "12G", java_active_processors =
     return(invisible(FALSE))
   }
 
-  current <- getOption("java.parameters")
-  if (!force && length(current) > 0 && nzchar(paste(current, collapse = ""))) {
-    return(invisible(FALSE))
-  }
-
   if (is.null(java_memory) || !nzchar(as.character(java_memory))) java_memory <- "12G"
   java_memory <- as.character(java_memory)
   if (is.null(java_active_processors)) java_active_processors <- 2L
@@ -85,12 +113,19 @@ configure_java_for_r5r <- function(java_memory = "12G", java_active_processors =
     java_active_processors <- 2L
   }
 
-  params <- c(
+  desired <- c(
     paste0("-Xmx", java_memory),
     "-Djava.awt.headless=true",
     paste0("-XX:ActiveProcessorCount=", java_active_processors)
   )
-  options(java.parameters = params)
+  current <- getOption("java.parameters")
+  current_chr <- if (length(current) > 0) as.character(current) else character()
+
+  if (!force && length(current_chr) > 0 && identical(current_chr, desired)) {
+    return(invisible(FALSE))
+  }
+
+  options(java.parameters = desired)
   invisible(TRUE)
 }
 

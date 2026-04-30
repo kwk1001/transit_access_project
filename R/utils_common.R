@@ -33,9 +33,22 @@ standardize_geoid5 <- function(x) {
   }
 
   x_chr <- as.character(x)
-  x_chr <- stringr::str_replace_all(x_chr, "[^0-9]", "")
+  x_chr <- trimws(x_chr)
   x_chr[x_chr == ""] <- NA_character_
-  ifelse(is.na(x_chr), NA_character_, stringr::str_pad(x_chr, width = 5, side = "left", pad = "0"))
+
+  digits <- stringr::str_replace_all(x_chr, "[^0-9]", "")
+  digits[digits == ""] <- NA_character_
+
+  out <- rep(NA_character_, length(digits))
+  idx_short <- !is.na(digits) & nchar(digits) > 0 & nchar(digits) < 5
+  idx_five <- !is.na(digits) & nchar(digits) == 5
+  idx_zip4 <- !is.na(digits) & nchar(digits) == 9
+
+  out[idx_short] <- stringr::str_pad(digits[idx_short], width = 5, side = "left", pad = "0")
+  out[idx_five] <- digits[idx_five]
+  out[idx_zip4] <- stringr::str_sub(digits[idx_zip4], 1, 5)
+
+  out
 }
 
 standardize_zone_id <- function(x, unit = "tract") {
@@ -49,12 +62,62 @@ standardize_zone_id <- function(x, unit = "tract") {
   }
 
   if (unit_use %in% c("zip", "zipcode", "zcta")) {
-    digits <- stringr::str_replace_all(x_chr, "[^0-9]", "")
-    digits[digits == ""] <- NA_character_
-    return(ifelse(is.na(digits), NA_character_, stringr::str_pad(digits, width = 5, side = "left", pad = "0")))
+    return(standardize_geoid5(x_chr))
   }
 
   x_chr
+}
+
+flag_invalid_zone_ids <- function(x, unit = "tract") {
+  unit_use <- normalize_analysis_unit(unit)
+  x_std <- standardize_zone_id(x, unit_use)
+  x_raw <- as.character(x)
+  x_raw <- trimws(x_raw)
+  x_raw[x_raw == ""] <- NA_character_
+
+  if (unit_use %in% c("tract", "census_tract")) {
+    return(!is.na(x_raw) & (is.na(x_std) | !stringr::str_detect(x_std, "^[0-9]{11}$")))
+  }
+
+  if (unit_use %in% c("zip", "zipcode", "zcta")) {
+    return(!is.na(x_raw) & (is.na(x_std) | !stringr::str_detect(x_std, "^[0-9]{5}$")))
+  }
+
+  rep(FALSE, length(x_raw))
+}
+
+summarize_zone_id_lengths <- function(x) {
+  tibble::tibble(raw_id = as.character(x)) %>%
+    dplyr::mutate(
+      raw_id = trimws(raw_id),
+      raw_id = dplyr::na_if(raw_id, ""),
+      n_digits = dplyr::if_else(
+        is.na(raw_id),
+        NA_integer_,
+        as.integer(nchar(stringr::str_replace_all(raw_id, "[^0-9]", "")))
+      )
+    ) %>%
+    dplyr::count(n_digits, name = "n") %>%
+    dplyr::arrange(n_digits)
+}
+
+assert_valid_zone_ids <- function(x, unit = "tract", label = "zone ids", max_examples = 20) {
+  bad <- flag_invalid_zone_ids(x, unit)
+  if (!any(bad, na.rm = TRUE)) {
+    return(invisible(TRUE))
+  }
+
+  bad_ids <- unique(as.character(x[bad]))
+  bad_ids <- bad_ids[!is.na(bad_ids) & nzchar(bad_ids)]
+  examples <- paste(utils::head(bad_ids, max_examples), collapse = ", ")
+  stop(
+    paste0(
+      "Invalid ", label, " for analysis unit `", normalize_analysis_unit(unit), "`. ",
+      "Example ids: ", examples,
+      ". This usually means IDs from another geography leaked into the pipeline."
+    ),
+    call. = FALSE
+  )
 }
 
 normalize_analysis_unit <- function(unit) {
@@ -209,6 +272,24 @@ read_csv_raw_character <- function(path, ...) {
 write_csv_gz <- function(df, path) {
   fs::dir_create(dirname(path))
   readr::write_csv(df, path)
+}
+
+csv_file_has_data_rows <- function(path) {
+  if (!file.exists(path) || dir.exists(path)) {
+    return(FALSE)
+  }
+
+  con <- if (grepl("\\.gz$", path, ignore.case = TRUE)) gzfile(path, open = "rt") else file(path, open = "rt")
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
+  lines <- tryCatch(readLines(con, n = 2, warn = FALSE), error = function(e) character())
+  length(lines) >= 2 && nzchar(lines[[2]])
+}
+
+all_csv_files_have_data_rows <- function(paths) {
+  if (length(paths) == 0) {
+    return(FALSE)
+  }
+  all(vapply(paths, csv_file_has_data_rows, logical(1)))
 }
 
 first_non_missing <- function(x) {

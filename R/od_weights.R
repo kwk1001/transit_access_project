@@ -182,6 +182,8 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
   }
 
     county_keep <- study_area_county_fips(cfg)
+  analysis_unit_use <- normalize_analysis_unit(cfg$geography$analysis_unit)
+
   out <- out %>%
     filter(
       !is.na(origin_tract),
@@ -192,11 +194,42 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
       stringr::str_sub(destination_tract, 1, 5) %in% county_keep
     ) %>%
     left_join(tract_to_zone %>% rename(origin_tract = tract_id, origin_zone = zone_id), by = "origin_tract") %>%
-    left_join(tract_to_zone %>% rename(destination_tract = tract_id, destination_zone = zone_id), by = "destination_tract") %>%
-    mutate(
-      origin_tract = dplyr::coalesce(origin_zone, origin_tract),
-      destination_tract = dplyr::coalesce(destination_zone, destination_tract)
-    ) %>%
+    left_join(tract_to_zone %>% rename(destination_tract = tract_id, destination_zone = zone_id), by = "destination_tract")
+
+  if (analysis_unit_use == "tract") {
+    out <- out %>%
+      mutate(
+        origin_tract = dplyr::coalesce(origin_zone, origin_tract),
+        destination_tract = dplyr::coalesce(destination_zone, destination_tract)
+      )
+  } else {
+    missing_origin <- out %>% dplyr::filter(is.na(origin_zone)) %>% dplyr::distinct(origin_tract)
+    missing_destination <- out %>% dplyr::filter(is.na(destination_zone)) %>% dplyr::distinct(destination_tract)
+    missing_pairs <- out %>% dplyr::filter(is.na(origin_zone) | is.na(destination_zone))
+
+    if (nrow(missing_pairs) > 0) {
+      origin_examples <- paste(utils::head(missing_origin$origin_tract, 10), collapse = ", ")
+      destination_examples <- paste(utils::head(missing_destination$destination_tract, 10), collapse = ", ")
+      warning(
+        paste0(
+          "Dropped ", nrow(missing_pairs), " trip record(s) because tract-to-zone assignment failed for analysis unit `",
+          analysis_unit_use,
+          "`. Example origin tracts: ", origin_examples,
+          "; example destination tracts: ", destination_examples
+        ),
+        call. = FALSE
+      )
+    }
+
+    out <- out %>%
+      mutate(
+        origin_tract = origin_zone,
+        destination_tract = destination_zone
+      ) %>%
+      dplyr::filter(!is.na(origin_tract), !is.na(destination_tract))
+  }
+
+  out <- out %>%
     {
       if (isTRUE(scenario$exclude_same_zone %||% scenario$exclude_same_tract)) {
         dplyr::filter(., origin_tract != destination_tract)
@@ -279,6 +312,9 @@ build_one_od_scenario <- function(trips_df, scenario, cfg) {
       source_id = cfg$active_survey_source_id
     )
 
+  assert_valid_zone_ids(od$origin_id, cfg$geography$analysis_unit, label = "origin ids in OD table")
+  assert_valid_zone_ids(od$destination_id, cfg$geography$analysis_unit, label = "destination ids in OD table")
+
   od <- prune_od_table(od, cfg)
   od <- apply_auxiliary_od_multipliers(od, cfg)
 
@@ -329,7 +365,7 @@ build_all_od_weights <- function(cfg) {
 }
 
 read_od_weights <- function(cfg) {
-  read_csv_guess(file.path(cfg$paths$od_dir, "od_weights_all.csv.gz")) %>%
+  out <- read_csv_guess(file.path(cfg$paths$od_dir, "od_weights_all.csv.gz")) %>%
     mutate(
       origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
       destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit)
@@ -338,4 +374,9 @@ read_od_weights <- function(cfg) {
       scenario_id = as.character(scenario_id),
       time_bin = as.character(time_bin)
     )
+
+  assert_valid_zone_ids(out$origin_id, cfg$geography$analysis_unit, label = "origin ids read from cached OD weights")
+  assert_valid_zone_ids(out$destination_id, cfg$geography$analysis_unit, label = "destination ids read from cached OD weights")
+
+  out
 }

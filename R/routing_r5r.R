@@ -279,7 +279,7 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
         n_tracts,
         point_method,
         representative_tract_id,
-        is_fallback = point_method == "fallback_zone_point_on_surface"
+        is_fallback = point_method == "fallback_zone_polygon_point_on_surface"
       )
     readr::write_csv(qc_tbl, file.path(cfg$paths$logs_dir, "zone_point_qc.csv"))
   }
@@ -378,13 +378,33 @@ filter_low_service_dates <- function(date_tbl, cfg, min_ratio = 0.2) {
 
 make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
   zone_ids <- standardize_zone_id(zone_ids, cfg$geography$analysis_unit)
-  out <- zone_centroids_sf %>%
+  zone_ids <- zone_ids[!is.na(zone_ids) & nzchar(zone_ids)]
+
+  centroids_tbl <- zone_centroids_sf %>%
     mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
-    filter(zone_id %in% zone_ids) %>%
+    filter(!is.na(zone_id), nzchar(zone_id)) %>%
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
     transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat))
+
+  missing_ids <- tibble::tibble(id = unique(zone_ids)) %>%
+    anti_join(centroids_tbl %>% distinct(id), by = "id")
+  if (nrow(missing_ids) > 0) {
+    missing_ids_txt <- paste(head(missing_ids$id, 50), collapse = ", ")
+    warning(
+      paste0(
+        "Requested ", nrow(missing_ids),
+        " routing point id(s) were not found in available routing centroids. ",
+        "This usually means OD ids leaked from the wrong geography or were excluded by service-area filtering. ",
+        "Example ids: ", missing_ids_txt
+      ),
+      call. = FALSE
+    )
+  }
+
+  out <- centroids_tbl %>%
+    filter(id %in% zone_ids)
 
   out_valid_rows <- out %>%
     filter(
@@ -405,13 +425,24 @@ make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
     warning(
       paste0(
         "Dropped ", nrow(dropped_ids),
-        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids_txt
+        " routing point id(s) because their coordinates were invalid after centroid extraction. ",
+        "Example ids: ", dropped_ids_txt
       ),
       call. = FALSE
     )
   }
 
   out_valid
+}
+
+build_empty_ttm_result <- function(percentiles = list(50)) {
+  pct <- unlist(percentiles %||% list(50))
+  pct <- as.integer(pct[!is.na(pct)])
+  out <- tibble::tibble(from_id = character(), to_id = character())
+  for (p in pct) {
+    out[[paste0("travel_time_p", p)]] <- numeric()
+  }
+  out
 }
 
 compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {
@@ -440,7 +471,7 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
         . <- . %>% mutate(across(all_of(tt_cols), ~ suppressWarnings(as.numeric(.x))))
       }
       .
-    )
+    }
 }
 
 compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, cfg = NULL, context = list()) {
@@ -467,13 +498,71 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
   }
 
   empty_ttm_result <- function() {
-    pct <- unlist(routing_cfg$percentiles %||% list(50))
-    pct <- as.integer(pct[!is.na(pct)])
-    out <- tibble::tibble(from_id = character(), to_id = character())
-    for (p in pct) {
-      out[[paste0("travel_time_p", p)]] <- numeric()
+    build_empty_ttm_result(routing_cfg$percentiles)
+  }
+
+  normalize_ttm_result <- function(result_obj, stage = "unknown", origin_id = NA_character_) {
+    if (is.null(result_obj)) {
+      return(NULL)
     }
-    out
+
+    out <- tryCatch(
+      {
+        if (inherits(result_obj, c("data.frame", "tbl_df", "tbl"))) {
+          tibble::as_tibble(result_obj)
+        } else if (is.atomic(result_obj) && !is.null(names(result_obj))) {
+          tibble::as_tibble_row(as.list(result_obj))
+        } else {
+          NULL
+        }
+      },
+      error = function(...) NULL
+    )
+
+    if (is.null(out)) {
+      if (!is.null(cfg) && !is.null(cfg$paths$logs_dir)) {
+        fs::dir_create(cfg$paths$logs_dir)
+        stamp_bad <- format(Sys.time(), "%Y%m%d_%H%M%S", tz = "UTC")
+        write_json_pretty(
+          list(
+            failure_type = "routing_malformed_result",
+            stage = stage,
+            origin_id = as.character(origin_id %||% NA_character_),
+            result_class = paste(class(result_obj), collapse = ","),
+            result_type = typeof(result_obj),
+            context = context
+          ),
+          file.path(
+            cfg$paths$logs_dir,
+            paste0(
+              "routing_malformed_result_",
+              stamp_bad,
+              "_",
+              context$time_window_id %||% "unknown",
+              "_chunk",
+              context$origin_chunk_id %||% "na",
+              "_dest",
+              context$destination_chunk_id %||% "na",
+              ".json"
+            )
+          )
+        )
+      }
+      return(NULL)
+    }
+
+    needed_cols <- names(empty_ttm_result())
+    missing_cols <- setdiff(needed_cols, names(out))
+    for (col in missing_cols) {
+      out[[col]] <- empty_ttm_result()[[col]]
+    }
+
+    out %>%
+      dplyr::select(dplyr::all_of(needed_cols), dplyr::everything()) %>%
+      dplyr::mutate(
+        from_id = as.character(.data$from_id),
+        to_id = as.character(.data$to_id)
+      )
   }
 
   emit_routing_failure <- function(initial_msg, retry_msg = NULL, retry_attempted = FALSE) {
@@ -625,7 +714,11 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
                         NULL
                       }
                     )
-                    sub_parts[[si]] <- sub_try
+                    sub_parts[[si]] <- normalize_ttm_result(
+                      sub_try,
+                      stage = paste0("per_origin_subchunk_", si),
+                      origin_id = origin_id
+                    )
                   }
 
                   sub_parts <- Filter(Negate(is.null), sub_parts)
@@ -640,7 +733,11 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
                 }
               )
 
-              fallback_results[[oi]] <- origin_try
+              fallback_results[[oi]] <- normalize_ttm_result(
+                origin_try,
+                stage = "per_origin_result",
+                origin_id = origin_id
+              )
             }
 
             fallback_results <- Filter(Negate(is.null), fallback_results)
@@ -756,7 +853,45 @@ aggregate_period_travel_times <- function(cfg) {
     )
 
   if (nrow(daily_all) == 0) {
-    stop("Daily travel time files were found, but they are empty.", call. = FALSE)
+    od_all <- read_od_weights(cfg) %>% dplyr::select(scenario_id, origin_id, destination_id) %>% dplyr::distinct()
+    routing_dates <- choose_routing_dates(cfg) %>% dplyr::select(period_id, period_label, analysis_date) %>% dplyr::distinct()
+    windows_tbl <- tibble::as_tibble(dplyr::bind_rows(cfg$routing$routing_windows)) %>%
+      dplyr::mutate(time_window_id = as.character(time_window_id), od_scenario_id = as.character(od_scenario_id)) %>%
+      dplyr::select(time_window_id, od_scenario_id)
+    routing_grid <- routing_dates %>% tidyr::crossing(windows_tbl)
+
+    period_agg <- routing_grid %>%
+      dplyr::left_join(od_all, by = c("od_scenario_id" = "scenario_id")) %>%
+      dplyr::rename(from_id = origin_id, to_id = destination_id) %>%
+      dplyr::mutate(
+        from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit),
+        to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)
+      ) %>%
+      dplyr::group_by(period_id, time_window_id, od_scenario_id, from_id, to_id) %>%
+      dplyr::summarise(
+        n_days_total = dplyr::n_distinct(analysis_date),
+        n_days_reached = 0L,
+        share_days_unreachable = 1,
+        .groups = "drop"
+      )
+
+    value_cols <- paste0("travel_time_p", as.integer(unlist(cfg$routing$percentiles %||% list(50))))
+    value_cols <- unique(value_cols[!is.na(value_cols) & nzchar(value_cols)])
+    for (col in value_cols) {
+      period_agg[[col]] <- NA_real_
+      period_agg[[paste0(col, "_penalized")]] <- cfg$routing$unreachable_penalty_minutes
+    }
+
+    write_csv_gz(period_agg, out_path)
+    warning(
+      paste0(
+        "Daily travel time files were found but all contained zero routed rows. ",
+        "Wrote period aggregate with share_days_unreachable = 1 and penalized travel times = unreachable penalty. ",
+        "Inspect routing_origin_fallback_*.json and routing failure diagnostics in logs_dir for the upstream cause."
+      ),
+      call. = FALSE
+    )
+    return(invisible(period_agg))
   }
 
   od_all <- read_od_weights(cfg) %>% select(scenario_id, origin_id, destination_id) %>% distinct()
@@ -806,7 +941,7 @@ compute_all_travel_times <- function(cfg) {
   expected_files <- expected_daily_output_paths(cfg, od_all, geography_outputs, routing_dates)
   period_out <- period_travel_time_output_path(cfg)
 
-  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_routing) && length(expected_files) > 0 && all_files_nonempty(expected_files, min_bytes = 100) && output_is_fresh(period_out, expected_files, min_bytes = 100)) {
+  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_routing) && length(expected_files) > 0 && all_csv_files_have_data_rows(expected_files) && output_is_fresh(period_out, expected_files, min_bytes = 100)) {
     message("All travel time chunks and period aggregates already exist. Skipping routing.")
     return(read_csv_guess(period_out) %>% mutate(from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit), to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)))
   }
@@ -815,7 +950,7 @@ compute_all_travel_times <- function(cfg) {
 
   for (feed_name in names(feed_groups)) {
     feed_expected <- expected_daily_output_paths(cfg, od_all, geography_outputs, routing_dates, feed_name_filter = feed_name)
-    if (!isTRUE(cfg$run_options$force_routing) && length(feed_expected) > 0 && all_files_nonempty(feed_expected, min_bytes = 100)) {
+    if (!isTRUE(cfg$run_options$force_routing) && length(feed_expected) > 0 && all_csv_files_have_data_rows(feed_expected)) {
       message("All routing chunks for ", feed_name, " already exist. Skipping network build for this feed.")
       next
     }
@@ -865,7 +1000,7 @@ compute_all_travel_times <- function(cfg) {
               )
             )
 
-            if (!isTRUE(cfg$run_options$force_routing) && file_is_nonempty(out_path, min_bytes = 100)) {
+            if (!isTRUE(cfg$run_options$force_routing) && csv_file_has_data_rows(out_path)) {
               next
             }
 
@@ -893,7 +1028,7 @@ compute_all_travel_times <- function(cfg) {
             destination_chunks <- split(destinations_needed, ceiling(seq_len(nrow(destinations_needed)) / destination_chunk_size))
 
             ttm_parts <- purrr::imap(destination_chunks, function(dest_chunk, dest_chunk_i) {
-              compute_ttm_one_chunk_with_retry(
+              part <- compute_ttm_one_chunk_with_retry(
                 network = network,
                 origins_df = origins_chunk,
                 destinations_df = dest_chunk,
@@ -913,13 +1048,32 @@ compute_all_travel_times <- function(cfg) {
                   od_pairs_in_chunk = nrow(od_pairs_chunk)
                 )
               )
+              if (inherits(part, c("data.frame", "tbl_df", "tbl"))) {
+                tibble::as_tibble(part)
+              } else {
+                NULL
+              }
             })
-            ttm <- dplyr::bind_rows(ttm_parts)
+            ttm_parts <- Filter(Negate(is.null), ttm_parts)
+            ttm <- if (length(ttm_parts) == 0) build_empty_ttm_result(cfg$routing$percentiles) else dplyr::bind_rows(ttm_parts)
+
+            ttm <- ttm %>%
+              mutate(
+                from_id = standardize_zone_id(from_id, cfg$geography$analysis_unit),
+                to_id = standardize_zone_id(to_id, cfg$geography$analysis_unit)
+              )
+
+            od_pairs_chunk_join <- od_pairs_chunk %>%
+              mutate(
+                origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
+                destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit)
+              )
+
+            raw_ttm_rows <- nrow(ttm)
 
             out <- ttm %>%
-              mutate(from_id = as.character(from_id), to_id = as.character(to_id)) %>%
               inner_join(
-                od_pairs_chunk %>% mutate(origin_id = as.character(origin_id), destination_id = as.character(destination_id)),
+                od_pairs_chunk_join,
                 by = c("from_id" = "origin_id", "to_id" = "destination_id")
               ) %>%
               mutate(
@@ -931,6 +1085,41 @@ compute_all_travel_times <- function(cfg) {
                 od_scenario_id = as.character(win$od_scenario_id),
                 origin_chunk_id = chunk_i
               )
+
+            if (raw_ttm_rows > 0 && nrow(out) == 0 && !is.null(cfg$paths$logs_dir)) {
+              fs::dir_create(cfg$paths$logs_dir)
+              stamp_join <- format(Sys.time(), "%Y%m%d_%H%M%S", tz = "UTC")
+              write_json_pretty(
+                list(
+                  failure_type = "routing_join_zero_rows",
+                  feed_name = as.character(date_row$feed_name),
+                  analysis_date = as.character(date_row$analysis_date),
+                  period_id = as.character(date_row$period_id),
+                  time_window_id = as.character(win$time_window_id),
+                  od_scenario_id = as.character(win$od_scenario_id),
+                  origin_chunk_id = chunk_i,
+                  raw_ttm_rows = raw_ttm_rows,
+                  raw_ttm_unique_from_ids = utils::head(unique(ttm$from_id), 50),
+                  raw_ttm_unique_to_ids = utils::head(unique(ttm$to_id), 50),
+                  od_origin_ids = utils::head(unique(od_pairs_chunk_join$origin_id), 50),
+                  od_destination_ids = utils::head(unique(od_pairs_chunk_join$destination_id), 50)
+                ),
+                file.path(
+                  cfg$paths$logs_dir,
+                  paste0(
+                    "routing_join_zero_rows_",
+                    stamp_join,
+                    "_",
+                    win$time_window_id,
+                    "_",
+                    date_row$analysis_date,
+                    "_chunk",
+                    chunk_i,
+                    ".json"
+                  )
+                )
+              )
+            }
 
             write_csv_gz(out, out_path)
           }

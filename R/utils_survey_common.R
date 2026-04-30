@@ -3,9 +3,11 @@ get_survey_adapter <- function(adapter_name) {
     cmap_phase1 = standardize_cmap_phase1,
     cmap_2018_2019 = standardize_cmap_2018_2019,
     dvrpc_public = standardize_dvrpc_public,
+    massachusetts_2011 = standardize_massachusetts_2011,
     chicago_2024_2025 = standardize_cmap_phase1,
     chicago_2018_2019 = standardize_cmap_2018_2019,
-    philly_dvrpc = standardize_dvrpc_public
+    philly_dvrpc = standardize_dvrpc_public,
+    boston_2011_mts = standardize_massachusetts_2011
   )
 
   if (!adapter_name %in% names(adapter_map)) {

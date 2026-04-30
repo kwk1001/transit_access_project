@@ -8,6 +8,7 @@ load_project <- function(project_root = getwd()) {
   source(file.path(project_root, "R", "adapters_cmap_phase1.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "adapters_cmap_2018_2019.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "adapters_dvrpc_public.R"), local = .GlobalEnv)
+  source(file.path(project_root, "R", "adapters_massachusetts_2011.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "od_weights.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "geography.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "gtfs_summary.R"), local = .GlobalEnv)
@@ -15,6 +16,23 @@ load_project <- function(project_root = getwd()) {
   source(file.path(project_root, "R", "accessibility_metrics.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "maps_leaflet.R"), local = .GlobalEnv)
   source(file.path(project_root, "R", "utils_cleanup.R"), local = .GlobalEnv)
+}
+
+
+reload_cfg_for_source <- function(cfg, source_id = NULL) {
+  source_id_use <- source_id %||% cfg$active_survey_source_id
+  if (identical(source_id_use, cfg$active_survey_source_id)) {
+    return(cfg)
+  }
+
+  cfg2 <- load_project_config(cfg$project$config_path, source_id_use)
+  apply_runtime_overrides(cfg2, list(
+    analysis_unit = cfg$geography$analysis_unit,
+    run_label = cfg$run_management$run_label,
+    force_all = cfg$run_options$force,
+    synthetic_survey_enabled = cfg$synthetic_survey$enabled,
+    synthetic_survey_max_travel_minutes = cfg$synthetic_survey$max_travel_minutes
+  ))
 }
 
 survey_outputs_exist <- function(cfg) {
@@ -43,107 +61,116 @@ gtfs_outputs_exist <- function(cfg) {
   ), min_bytes = 50)
 }
 
+analysis_geography_outputs_exist <- function(cfg) {
+  required_files <- c(cfg$paths$zones_path, cfg$paths$zone_centroids_path, cfg$paths$zone_lookup_path)
+  if (isTRUE(cfg$geography$restrict_to_gtfs_service_area)) {
+    required_files <- c(required_files, cfg$paths$service_area_path, cfg$paths$zones_served_path, cfg$paths$zone_centroids_served_path)
+  }
+  all_files_nonempty(required_files, min_bytes = 50)
+}
+
 accessibility_outputs_exist <- function(cfg) {
   all_files_nonempty(c(
-    file.path(cfg$paths$accessibility_dir, "tract_period_metrics.csv"),
-    file.path(cfg$paths$accessibility_dir, "tract_period_comparisons.csv"),
-    file.path(cfg$paths$accessibility_dir, "tract_period_metrics.gpkg"),
-    file.path(cfg$paths$accessibility_dir, "tract_period_comparisons.gpkg")
+    file.path(cfg$paths$accessibility_dir, "zone_period_metrics.csv"),
+    file.path(cfg$paths$accessibility_dir, "zone_period_comparisons.csv"),
+    file.path(cfg$paths$accessibility_dir, "zone_period_metrics.gpkg"),
+    file.path(cfg$paths$accessibility_dir, "zone_period_comparisons.gpkg")
   ), min_bytes = 50)
 }
 
+maps_outputs_exist <- function(cfg) {
+  file_is_nonempty(file.path(cfg$paths$maps_dir, "index.html"), min_bytes = 50)
+}
+
 run_download_geography <- function(cfg) {
+  ensure_project_dirs(cfg)
+
   tract_path <- file.path(cfg$paths$geography_dir, "tracts.gpkg")
   centroid_path <- file.path(cfg$paths$geography_dir, "tract_centroids.gpkg")
   county_path <- file.path(cfg$paths$geography_dir, "county_outlines.gpkg")
-  zones_path <- file.path(cfg$paths$geography_dir, "analysis_zones.gpkg")
-  zone_centroids_path <- file.path(cfg$paths$geography_dir, "analysis_zone_centroids.gpkg")
-  crosswalk_path <- file.path(cfg$paths$geography_dir, "tract_to_analysis_zone.csv")
-  service_area_path <- file.path(cfg$paths$service_area_dir, "service_area.gpkg")
 
-  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_downloads) && all_files_nonempty(c(tract_path, centroid_path, county_path, zones_path, zone_centroids_path, crosswalk_path), 50) && file_is_nonempty(cfg$osm$local_pbf_path, 1024 * 1024) && (!isTRUE(cfg$geography$restrict_to_gtfs_service_area) || file_is_nonempty(service_area_path, 100))) {
+  have_base_geo <- all_files_nonempty(c(tract_path, centroid_path, county_path), 100)
+  have_osm <- file_is_nonempty(cfg$osm$local_pbf_path, 1024 * 1024)
+  have_analysis_geo <- analysis_geography_outputs_exist(cfg)
+
+  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_downloads) && have_base_geo && have_osm && have_analysis_geo) {
     message("Geography and OSM already prepared for run ", cfg$run$run_id, ". Skipping download step.")
-    return(read_geography_outputs(cfg))
+    return(read_analysis_geography(cfg, served = isTRUE(cfg$geography$restrict_to_gtfs_service_area)))
   }
 
-  ensure_project_dirs(cfg)
-  write_run_metadata(cfg)
   message("Downloading tract and county geography for ", cfg$project$city_label, "...")
   download_osm_pbf_if_needed(cfg)
   geography_outputs <- download_county_tract_geography(cfg)
   build_service_area(cfg, geography_outputs)
-  invisible(geography_outputs)
+  build_analysis_geography(cfg, geography_outputs)
+  out <- read_analysis_geography(cfg, served = isTRUE(cfg$geography$restrict_to_gtfs_service_area))
+  write_run_metadata(cfg)
+  invisible(out)
 }
 
 run_download_optional_covariates <- function(cfg) {
+  ensure_project_dirs(cfg)
   maybe_download_optional_covariates(cfg)
 }
 
-run_standardize_surveys <- function(cfg, source_ids = NULL) {
-  if (isTRUE(cfg$synthetic_survey$enabled)) {
-    message("Synthetic survey mode enabled. Skipping survey standardization step.")
-    return(invisible(NULL))
-  }
 
+run_standardize_surveys <- function(cfg, source_ids = NULL) {
   source_id_use <- source_ids %||% cfg$active_survey_source_id
-  cfg2 <- if (identical(source_id_use, cfg$active_survey_source_id)) cfg else load_project_config(cfg$project$config_path, source_id_use)
+  cfg2 <- reload_cfg_for_source(cfg, source_id_use)
+  ensure_project_dirs(cfg2)
 
   if (!isTRUE(cfg2$run_options$force) && !isTRUE(cfg2$run_options$force_standardize) && survey_outputs_exist(cfg2)) {
     message("Standardized survey outputs already exist for ", cfg2$active_survey_source_id, ". Skipping.")
     return(read_standardized_survey(cfg2))
   }
 
-  ensure_project_dirs(cfg2)
-  write_run_metadata(cfg2)
   message("Standardizing survey source: ", cfg2$active_survey_source_id)
   adapter <- get_survey_adapter(cfg2$active_survey_source$adapter)
   std_list <- adapter(cfg2)
   save_standardized_survey(std_list, cfg2$paths$survey_dir)
+  write_run_metadata(cfg2)
   invisible(std_list)
 }
 
 run_build_od_weights <- function(cfg, source_id = NULL) {
-  source_id_use <- source_id %||% cfg$active_survey_source_id
-  cfg2 <- if (identical(source_id_use, cfg$active_survey_source_id)) cfg else load_project_config(cfg$project$config_path, source_id_use)
+  cfg2 <- reload_cfg_for_source(cfg, source_id %||% cfg$active_survey_source_id)
+  ensure_project_dirs(cfg2)
 
   if (!isTRUE(cfg2$run_options$force) && !isTRUE(cfg2$run_options$force_od) && od_outputs_exist(cfg2)) {
     message("OD weights already exist for run ", cfg2$run$run_id, ". Skipping.")
     return(read_od_weights(cfg2))
   }
 
-  ensure_project_dirs(cfg2)
+  out <- build_all_od_weights(cfg2)
   write_run_metadata(cfg2)
-  build_all_od_weights(cfg2)
+  out
 }
 
 run_gtfs_supply_compare <- function(cfg) {
+  ensure_project_dirs(cfg)
+
   if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_gtfs) && gtfs_outputs_exist(cfg)) {
     message("GTFS supply summaries already exist for run ", cfg$run$run_id, ". Skipping.")
     return(invisible(NULL))
   }
 
-  ensure_project_dirs(cfg)
+  out <- summarize_gtfs_by_period(cfg)
   write_run_metadata(cfg)
-  summarize_gtfs_by_period(cfg)
+  out
 }
 
 run_compute_od_travel_times <- function(cfg) {
-  period_out <- file.path(cfg$paths$travel_time_dir, "period_travel_times.csv.gz")
-  daily_dir <- file.path(cfg$paths$travel_time_dir, "daily")
-  daily_files <- if (dir.exists(daily_dir)) fs::dir_ls(daily_dir, glob = "*.csv.gz") else character()
-  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_routing) && length(daily_files) > 0 && output_is_fresh(period_out, daily_files, 100)) {
-    message("Travel time outputs already exist and are up to date for run ", cfg$run$run_id, ". Skipping.")
-    return(invisible(NULL))
-  }
-
   ensure_project_dirs(cfg)
+  out <- compute_all_travel_times(cfg)
   write_run_metadata(cfg)
-  compute_all_travel_times(cfg)
+  out
 }
 
 run_aggregate_metrics <- function(cfg) {
-  out_metrics <- file.path(cfg$paths$accessibility_dir, "tract_period_metrics.csv")
-  out_comp <- file.path(cfg$paths$accessibility_dir, "tract_period_comparisons.csv")
+  ensure_project_dirs(cfg)
+
+  out_metrics <- file.path(cfg$paths$accessibility_dir, "zone_period_metrics.csv")
+  out_comp <- file.path(cfg$paths$accessibility_dir, "zone_period_comparisons.csv")
   input_paths <- c(file.path(cfg$paths$travel_time_dir, "period_travel_times.csv.gz"), file.path(cfg$paths$od_dir, "od_weights_all.csv.gz"))
 
   if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_metrics) && accessibility_outputs_exist(cfg) && output_is_fresh(out_metrics, input_paths, 50) && output_is_fresh(out_comp, input_paths, 50)) {
@@ -151,60 +178,29 @@ run_aggregate_metrics <- function(cfg) {
     return(invisible(NULL))
   }
 
-  ensure_project_dirs(cfg)
+  out <- compute_period_metrics(cfg)
   write_run_metadata(cfg)
-  compute_period_metrics(cfg)
-}
-
-write_output_run_bundle <- function(cfg) {
-  fs::dir_create(cfg$paths$maps_dir)
-  key_params <- list(
-    city_id = cfg$project$city_id,
-    city_label = cfg$project$city_label,
-    source_id = cfg$active_survey_source_id,
-    analysis_unit = cfg$geography$analysis_unit,
-    run_id = cfg$run$run_id,
-    run_label = cfg$run$run_label,
-    analysis_signature = cfg$run$analysis_signature_short,
-    routing = list(
-      modes = cfg$routing$modes,
-      max_walk_time = cfg$routing$max_walk_time,
-      max_trip_duration = cfg$routing$max_trip_duration,
-      n_threads = cfg$routing$n_threads
-    ),
-    map = cfg$map,
-    od_settings = cfg$od_settings,
-    synthetic_survey = cfg$synthetic_survey
-  )
-  write_json_pretty(key_params, file.path(cfg$paths$maps_dir, "run_key_parameters.json"))
-  if (file.exists(cfg$project$config_path)) {
-    file.copy(cfg$project$config_path, file.path(cfg$paths$maps_dir, basename(cfg$project$config_path)), overwrite = TRUE)
-  }
-  meta_flat <- file.path(cfg$paths$metadata_dir, "parameters_flat.csv")
-  if (file.exists(meta_flat)) {
-    file.copy(meta_flat, file.path(cfg$paths$maps_dir, "parameters_flat.csv"), overwrite = TRUE)
-  }
-  invisible(NULL)
+  out
 }
 
 run_make_maps <- function(cfg) {
+  ensure_project_dirs(cfg)
+
   index_path <- file.path(cfg$paths$maps_dir, "index.html")
   input_paths <- c(
-    file.path(cfg$paths$accessibility_dir, "tract_period_metrics.gpkg"),
-    file.path(cfg$paths$accessibility_dir, "tract_period_comparisons.gpkg"),
+    file.path(cfg$paths$accessibility_dir, "zone_period_metrics.gpkg"),
+    file.path(cfg$paths$accessibility_dir, "zone_period_comparisons.gpkg"),
     file.path(cfg$paths$od_dir, "od_marginals_origin.csv"),
     file.path(cfg$paths$od_dir, "od_marginals_destination.csv"),
     file.path(cfg$paths$od_dir, "top_od_pairs.csv")
   )
 
-  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_maps) && output_is_fresh(index_path, input_paths, 50)) {
+  if (!isTRUE(cfg$run_options$force) && !isTRUE(cfg$run_options$force_maps) && maps_outputs_exist(cfg) && output_is_fresh(index_path, input_paths, 50)) {
     message("Interactive maps already exist and are up to date for run ", cfg$run$run_id, ". Skipping.")
-    write_output_run_bundle(cfg)
     return(invisible(NULL))
   }
 
-  ensure_project_dirs(cfg)
+  out <- make_all_interactive_maps(cfg)
   write_run_metadata(cfg)
-  make_all_interactive_maps(cfg)
-  write_output_run_bundle(cfg)
+  out
 }

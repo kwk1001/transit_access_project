@@ -3,6 +3,7 @@ project_default_timezone <- function(city_id) {
     city_id,
     chicago = "America/Chicago",
     philadelphia = "America/New_York",
+    boston = "America/New_York",
     "America/New_York"
   )
 }
@@ -13,6 +14,27 @@ make_county_specs_from_list_config <- function(cfg_raw) {
     purrr::map(~ as.list(.x[1, ]))
 }
 
+normalize_od_scenario_entry <- function(sc) {
+  sc <- sc %||% list()
+  exclude_same_zone <- dplyr::coalesce(sc$exclude_same_zone, sc$exclude_same_tract, FALSE)
+
+  sc$scenario_id <- as.character(sc$scenario_id %||% "scenario")
+  sc$scenario_label <- as.character(sc$scenario_label %||% sc$scenario_id)
+  sc$weekday_only <- isTRUE(sc$weekday_only)
+  sc$allowed_travel_dow <- sc$allowed_travel_dow %||% list()
+  sc$transit_only <- isTRUE(sc$transit_only)
+  sc$allowed_purpose_groups <- sc$allowed_purpose_groups %||% list()
+  sc$allowed_mode_groups <- sc$allowed_mode_groups %||% list()
+  sc$exclude_same_zone <- isTRUE(exclude_same_zone)
+  sc$exclude_same_tract <- sc$exclude_same_zone
+  sc$time_bin_rules <- sc$time_bin_rules %||% list()
+  sc
+}
+
+normalize_od_scenarios <- function(x) {
+  purrr::map(x %||% list(), normalize_od_scenario_entry)
+}
+
 make_survey_sources_from_yaml <- function(cfg_yaml) {
   survey_cfg <- cfg_yaml$survey %||% list()
 
@@ -21,7 +43,7 @@ make_survey_sources_from_yaml <- function(cfg_yaml) {
       list(
         source_id = x$source_id %||% paste0(cfg_yaml$project$city_id, "_", cfg_yaml$project$survey_wave),
         adapter = x$adapter,
-        file_path = x$file_path,
+        file_path = x$file_path %||% x$zip_path,
         label = x$label %||% x$source_id,
         keep_complete_only = isTRUE(x$keep_complete_only %||% survey_cfg$keep_complete_only)
       )
@@ -31,7 +53,7 @@ make_survey_sources_from_yaml <- function(cfg_yaml) {
   list(list(
     source_id = survey_cfg$source_id %||% paste0(cfg_yaml$project$city_id, "_", cfg_yaml$project$survey_wave),
     adapter = survey_cfg$adapter,
-    file_path = survey_cfg$zip_path,
+    file_path = survey_cfg$file_path %||% survey_cfg$zip_path,
     label = survey_cfg$label %||% cfg_yaml$project$survey_name,
     keep_complete_only = isTRUE(survey_cfg$keep_complete_only)
   ))
@@ -69,7 +91,7 @@ make_gtfs_feeds_from_yaml <- function(cfg_yaml) {
 
 make_od_scenarios_from_list <- function(cfg_raw) {
   purrr::imap(cfg_raw$time_windows, function(win, nm) {
-    list(
+    normalize_od_scenario_entry(list(
       scenario_id = nm,
       scenario_label = paste(nm, "all purposes"),
       weekday_only = isTRUE(cfg_raw$od_weights$weekday_only),
@@ -77,9 +99,9 @@ make_od_scenarios_from_list <- function(cfg_raw) {
       transit_only = identical(cfg_raw$od_weights$transit_filter, "transit_only"),
       allowed_purpose_groups = cfg_raw$od_weights$purpose_groups,
       allowed_mode_groups = NULL,
-      exclude_same_tract = TRUE,
+      exclude_same_zone = TRUE,
       time_bin_rules = list(list(time_bin = nm, start_time = win$start, end_time = win$end))
-    )
+    ))
   })
 }
 
@@ -137,7 +159,7 @@ validate_normalized_config <- function(cfg) {
 
   required_od_fields <- c(
     "scenario_id", "scenario_label", "weekday_only", "allowed_travel_dow", "transit_only",
-    "allowed_purpose_groups", "allowed_mode_groups", "exclude_same_tract", "time_bin_rules"
+    "allowed_purpose_groups", "allowed_mode_groups", "exclude_same_zone", "time_bin_rules"
   )
   if (!is.list(cfg$od_scenarios) || length(cfg$od_scenarios) == 0) {
     stop("Config error: od_scenarios must be a non-empty list.", call. = FALSE)
@@ -183,6 +205,8 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
   survey_sources <- make_survey_sources_from_yaml(cfg_yaml)
   survey_cfg <- cfg_yaml$survey %||% list()
   active_survey_source_id <- survey_cfg$source_id %||% survey_cfg$default_source_id %||% survey_sources[[1]]$source_id
+  spatial_cfg <- cfg_yaml$spatial %||% cfg_yaml$geography %||% list()
+  analysis_area_cfg <- cfg_yaml$analysis_area %||% list()
 
   list(
     project = list(
@@ -196,16 +220,16 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
     survey_sources = survey_sources,
     active_survey_source_id = active_survey_source_id,
     analysis_area = list(
-      counties = cfg_yaml$analysis_area$counties,
-      tract_year = cfg_yaml$analysis_area$tract_year,
-      county_outline_year = cfg_yaml$analysis_area$county_outline_year %||% cfg_yaml$analysis_area$tract_year,
-      zip_zcta_year = as.integer(cfg_yaml$analysis_area$zip_zcta_year %||% 2020),
-      taz_file = cfg_yaml$analysis_area$taz_file %||% NULL,
-      taz_id_col = cfg_yaml$analysis_area$taz_id_col %||% "taz_id",
-      taz_name_col = cfg_yaml$analysis_area$taz_name_col %||% NULL
+      counties = analysis_area_cfg$counties,
+      tract_year = analysis_area_cfg$tract_year,
+      county_outline_year = analysis_area_cfg$county_outline_year %||% analysis_area_cfg$tract_year,
+      zip_zcta_year = as.integer(spatial_cfg$zcta_year %||% analysis_area_cfg$zip_zcta_year %||% 2020),
+      taz_file = spatial_cfg$taz$zones_file %||% analysis_area_cfg$taz_file %||% NULL,
+      taz_id_col = spatial_cfg$taz$zone_id_col %||% analysis_area_cfg$taz_id_col %||% "taz_id",
+      taz_name_col = spatial_cfg$taz$zone_label_col %||% analysis_area_cfg$taz_name_col %||% NULL
     ),
     geography = list(
-      analysis_unit = normalize_analysis_unit(cfg_yaml$geography$analysis_unit %||% "tract"),
+      analysis_unit = normalize_analysis_unit(spatial_cfg$analysis_unit %||% "tract"),
       service_buffer_m = cfg_yaml$routing$service_area_buffer_m %||% 2000,
       restrict_to_gtfs_service_area = isTRUE(cfg_yaml$routing$restrict_to_service_area)
     ),
@@ -214,7 +238,7 @@ normalize_yaml_config <- function(cfg_yaml, config_path) {
       weekday_only = isTRUE(cfg_yaml$analysis_calendar$weekday_only),
       excluded_dates = if (is.null(cfg_yaml$analysis_calendar$excluded_dates)) as.Date(character()) else as.Date(unlist(cfg_yaml$analysis_calendar$excluded_dates))
     ),
-    od_scenarios = cfg_yaml$od_scenarios,
+    od_scenarios = normalize_od_scenarios(cfg_yaml$od_scenarios),
     od_settings = list(
       minimum_weight = cfg_yaml$od_settings$minimum_weight %||% 0,
       minimum_weight_share_within_origin = cfg_yaml$od_settings$minimum_weight_share_within_origin %||% 0,
@@ -428,6 +452,9 @@ build_project_paths <- function(cfg, source_id, run_id) {
   city_id <- cfg$project$city_id
   unit_id <- normalize_analysis_unit(cfg$geography$analysis_unit %||% "tract")
   run_root <- file.path(project_root, "data", "processed", city_id, "runs", source_id, unit_id, run_id)
+  geography_dir <- file.path(project_root, "data", "processed", city_id, "geography", unit_id)
+  service_area_dir <- file.path(run_root, "geography")
+
   list(
     project_root = project_root,
     run_id = run_id,
@@ -436,8 +463,14 @@ build_project_paths <- function(cfg, source_id, run_id) {
     raw_gtfs_dir = file.path(project_root, "data", "raw", "gtfs", city_id),
     raw_osm_dir = file.path(project_root, "data", "raw", "osm", city_id),
     survey_dir = file.path(project_root, "data", "processed", city_id, "survey", source_id),
-    geography_dir = file.path(project_root, "data", "processed", city_id, "geography", cfg$geography$analysis_unit %||% "tract"),
-    service_area_dir = file.path(run_root, "geography"),
+    geography_dir = geography_dir,
+    zones_path = file.path(geography_dir, "analysis_zones.gpkg"),
+    zone_centroids_path = file.path(geography_dir, "analysis_zone_centroids.gpkg"),
+    zone_lookup_path = file.path(geography_dir, "tract_to_analysis_zone.csv"),
+    service_area_dir = service_area_dir,
+    service_area_path = file.path(service_area_dir, "service_area.gpkg"),
+    zones_served_path = file.path(service_area_dir, "tracts_served.gpkg"),
+    zone_centroids_served_path = file.path(service_area_dir, "tract_centroids_served.gpkg"),
     od_dir = file.path(run_root, "od"),
     gtfs_output_dir = file.path(run_root, "gtfs_supply"),
     network_dir = file.path(project_root, "data", "processed", city_id, "networks"),
@@ -523,7 +556,7 @@ parse_args_config <- function(default_config = NULL, project_root = getwd()) {
 apply_runtime_overrides <- function(cfg, overrides = list()) {
   if (length(overrides) == 0) return(cfg)
 
-  if (!is.null(overrides$analysis_unit)) {
+  if (!is.null(overrides$analysis_unit) && nzchar(as.character(overrides$analysis_unit))) {
     cfg$geography$analysis_unit <- normalize_analysis_unit(overrides$analysis_unit)
   }
   if (!is.null(overrides$run_label)) {

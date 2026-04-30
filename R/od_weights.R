@@ -173,11 +173,7 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
     out <- out %>% filter(mode_group %in% allowed_modes)
   }
 
-  if (isTRUE(scenario$exclude_same_tract)) {
-    out <- out %>% filter(origin_tract != destination_tract)
-  }
-
-  county_keep <- study_area_county_fips(cfg)
+    county_keep <- study_area_county_fips(cfg)
   out <- out %>%
     filter(
       !is.na(origin_tract),
@@ -193,6 +189,13 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
       origin_tract = dplyr::coalesce(origin_zone, origin_tract),
       destination_tract = dplyr::coalesce(destination_zone, destination_tract)
     ) %>%
+    {
+      if (isTRUE(scenario$exclude_same_zone %||% scenario$exclude_same_tract)) {
+        dplyr::filter(., origin_tract != destination_tract)
+      } else {
+        .
+      }
+    } %>%
     select(-origin_zone, -destination_zone)
 
   out

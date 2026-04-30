@@ -29,10 +29,6 @@ analysis_area:
       county: Bristol
     - state: MA
       county: Worcester
-    - state: NH
-      county: Rockingham
-    - state: NH
-      county: Hillsborough
 
 spatial:
   analysis_unit: zip

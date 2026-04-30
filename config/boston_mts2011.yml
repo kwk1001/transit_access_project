@@ -52,21 +52,21 @@ spatial:
     raw_trip_destination_col: null
 
 osm:
-  download_url: https://download.geofabrik.de/north-america/us/massachusetts-latest.osm.pbf
-  local_pbf_path: data/raw/osm/boston/massachusetts-latest.osm.pbf
+  download_url: https://download.geofabrik.de/north-america/us/northeast-latest.osm.pbf
+  local_pbf_path: data/raw/osm/boston/us-northeast-latest.osm.pbf
 
 study_periods:
   - period_id: P1
-    period_label: 2025-09-02_to_2025-10-01
-    period_start: 2025-09-02
-    period_end_exclusive: 2025-10-01
+    period_label: 2025-08-18_to_2025-09-15
+    period_start: 2025-08-18
+    period_end_exclusive: 2025-09-15
   - period_id: P2
-    period_label: 2025-10-01_to_2025-11-01
-    period_start: 2025-10-01
-    period_end_exclusive: 2025-11-01
+    period_label: 2025-09-15_to_2025-10-20
+    period_start: 2025-09-15
+    period_end_exclusive: 2025-10-20
   - period_id: P3
-    period_label: 2025-11-01_to_2025-12-13
-    period_start: 2025-11-01
+    period_label: 2025-10-20_to_2025-12-13
+    period_start: 2025-10-20
     period_end_exclusive: 2025-12-13
 
 analysis_calendar:

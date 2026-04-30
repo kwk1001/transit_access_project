@@ -129,10 +129,10 @@ routing:
     - 50
   service_area_buffer_m: 2000
   restrict_to_service_area: true
-  origin_chunk_size: 30
+  origin_chunk_size: 80
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 1
+  n_threads: 4
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak

@@ -298,11 +298,82 @@ choose_routing_dates <- function(cfg) {
     feed_registry = feed_registry
   )
 
+  all_dates <- filter_low_service_dates(all_dates, cfg)
+
   if (identical(cfg$routing$date_strategy, "sample_n_dates_per_period")) {
     return(sample_dates_evenly(all_dates, cfg$routing$sample_n_dates_per_period))
   }
 
   all_dates
+}
+
+parse_gtfs_service_levels <- function(gtfs_zip_path) {
+  td <- tempfile("gtfs_service_")
+  dir.create(td, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(td, recursive = TRUE, force = TRUE), add = TRUE)
+  utils::unzip(gtfs_zip_path, exdir = td)
+
+  cal_path <- file.path(td, "calendar.txt")
+  cal_dates_path <- file.path(td, "calendar_dates.txt")
+  if (!file.exists(cal_path)) return(tibble::tibble(date = as.Date(character()), n_services = integer()))
+
+  cal <- readr::read_csv(cal_path, show_col_types = FALSE, progress = FALSE)
+  if (nrow(cal) == 0) return(tibble::tibble(date = as.Date(character()), n_services = integer()))
+
+  all_days <- seq(min(as.Date(as.character(cal$start_date), "%Y%m%d")), max(as.Date(as.character(cal$end_date), "%Y%m%d")), by = "day")
+  w <- as.integer(lubridate::wday(all_days, week_start = 1))
+  out <- vector("list", nrow(cal))
+  for (i in seq_len(nrow(cal))) {
+    sd <- as.Date(as.character(cal$start_date[[i]]), "%Y%m%d")
+    ed <- as.Date(as.character(cal$end_date[[i]]), "%Y%m%d")
+    idx <- which(all_days >= sd & all_days <= ed)
+    day_seq <- all_days[idx]
+    w2 <- w[idx]
+    keep <- (w2 == 1 & cal$monday[[i]] == 1) | (w2 == 2 & cal$tuesday[[i]] == 1) | (w2 == 3 & cal$wednesday[[i]] == 1) |
+      (w2 == 4 & cal$thursday[[i]] == 1) | (w2 == 5 & cal$friday[[i]] == 1) | (w2 == 6 & cal$saturday[[i]] == 1) | (w2 == 7 & cal$sunday[[i]] == 1)
+    out[[i]] <- tibble::tibble(date = day_seq[keep], n_services = 1L)
+  }
+  svc <- dplyr::bind_rows(out) %>% dplyr::group_by(date) %>% dplyr::summarise(n_services = sum(n_services), .groups = "drop")
+
+  if (file.exists(cal_dates_path)) {
+    cd <- readr::read_csv(cal_dates_path, show_col_types = FALSE, progress = FALSE)
+    if (nrow(cd) > 0) {
+      cd <- cd %>% dplyr::transmute(date = as.Date(as.character(date), "%Y%m%d"), exception_type = as.integer(exception_type))
+      add <- cd %>% dplyr::filter(exception_type == 1) %>% dplyr::count(date, name = "n_add")
+      rem <- cd %>% dplyr::filter(exception_type == 2) %>% dplyr::count(date, name = "n_rem")
+      svc <- svc %>%
+        dplyr::full_join(add, by = "date") %>%
+        dplyr::full_join(rem, by = "date") %>%
+        dplyr::mutate(n_services = pmax(0L, dplyr::coalesce(n_services, 0L) + dplyr::coalesce(n_add, 0L) - dplyr::coalesce(n_rem, 0L))) %>%
+        dplyr::select(date, n_services)
+    }
+  }
+  svc
+}
+
+filter_low_service_dates <- function(date_tbl, cfg, min_ratio = 0.2) {
+  if (nrow(date_tbl) == 0) return(date_tbl)
+  feed_files <- cfg$gtfs_feeds %>%
+    purrr::map_dfr(~ tibble::tibble(feed_name = as.character(.x$feed_name), gtfs_path = as.character(.x$gtfs_files[[1]])))
+
+  svc_tbl <- purrr::map_dfr(seq_len(nrow(feed_files)), function(i) {
+    p <- feed_files$gtfs_path[[i]]
+    if (!file.exists(p)) return(tibble::tibble(feed_name = feed_files$feed_name[[i]], date = as.Date(character()), n_services = integer()))
+    parse_gtfs_service_levels(p) %>% dplyr::mutate(feed_name = feed_files$feed_name[[i]])
+  })
+  if (nrow(svc_tbl) == 0) return(date_tbl)
+
+  svc_tbl <- svc_tbl %>%
+    dplyr::group_by(feed_name) %>%
+    dplyr::mutate(max_services = max(n_services, na.rm = TRUE), service_ratio = dplyr::if_else(max_services > 0, n_services / max_services, 0)) %>%
+    dplyr::ungroup()
+
+  out <- date_tbl %>%
+    dplyr::left_join(svc_tbl %>% dplyr::rename(analysis_date = date), by = c("feed_name", "analysis_date")) %>%
+    dplyr::filter(is.na(service_ratio) | service_ratio >= min_ratio) %>%
+    dplyr::select(names(date_tbl))
+
+  if (nrow(out) == 0) date_tbl else out
 }
 
 make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
@@ -362,6 +433,13 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     mutate(
       from_id = as.character(from_id),
       to_id = as.character(to_id)
+    ) %>%
+    {
+      tt_cols <- names(.)[stringr::str_detect(names(.), "^travel_time_p[0-9]+$")]
+      if (length(tt_cols) > 0) {
+        . <- . %>% mutate(across(all_of(tt_cols), ~ suppressWarnings(as.numeric(.x))))
+      }
+      .
     )
 }
 

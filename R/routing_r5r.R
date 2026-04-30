@@ -227,16 +227,40 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
 
   missing_zone_ids <- setdiff(unique(zone_centroids_default$zone_id), unique(zone_sf$zone_id))
   if (length(missing_zone_ids) > 0) {
-    fallback <- zone_centroids_default %>%
+    fallback <- geography_outputs$analysis_zones %>%
       filter(zone_id %in% missing_zone_ids) %>%
+      sf::st_make_valid() %>%
+      suppressWarnings(sf::st_point_on_surface(.)) %>%
+      sf::st_transform(4326) %>%
       mutate(
         lon = sf::st_coordinates(.)[, 1],
         lat = sf::st_coordinates(.)[, 2],
         n_tracts = NA_integer_,
-        point_method = "fallback_zone_point_on_surface",
+        point_method = "fallback_zone_polygon_point_on_surface",
         representative_tract_id = NA_character_
       ) %>%
       dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id)
+
+    fallback <- fallback %>%
+      filter(
+        !is.na(lon), !is.na(lat),
+        is.finite(lon), is.finite(lat),
+        lon >= -180, lon <= 180,
+        lat >= -90, lat <= 90
+      )
+
+    if (nrow(fallback) < length(missing_zone_ids)) {
+      unresolved <- setdiff(missing_zone_ids, fallback$zone_id)
+      warning(
+        paste0(
+          "Could not build valid fallback routing points for ", length(unresolved),
+          " ZIP zone(s). These zones will be excluded from routing. Example ids: ",
+          paste(head(unresolved, 50), collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
     zone_sf <- dplyr::bind_rows(zone_sf, fallback)
   }
 
@@ -280,13 +304,40 @@ choose_routing_dates <- function(cfg) {
 
 make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
   zone_ids <- standardize_zone_id(zone_ids, cfg$geography$analysis_unit)
-  zone_centroids_sf %>%
+  out <- zone_centroids_sf %>%
     mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
     filter(zone_id %in% zone_ids) %>%
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
-    transmute(id = as.character(zone_id), lon = lon, lat = lat)
+    transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat))
+
+  out_valid_rows <- out %>%
+    filter(
+      !is.na(id),
+      !is.na(lon), !is.na(lat),
+      is.finite(lon), is.finite(lat),
+      lon >= -180, lon <= 180,
+      lat >= -90, lat <= 90
+    )
+
+  out_valid <- out_valid_rows %>% distinct(id, .keep_all = TRUE)
+
+  dropped_ids <- out %>%
+    distinct(id) %>%
+    anti_join(out_valid %>% distinct(id), by = "id")
+  if (nrow(dropped_ids) > 0) {
+    dropped_ids_txt <- paste(head(dropped_ids$id, 50), collapse = ", ")
+    warning(
+      paste0(
+        "Dropped ", nrow(dropped_ids),
+        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids_txt
+      ),
+      call. = FALSE
+    )
+  }
+
+  out_valid
 }
 
 compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {
@@ -325,6 +376,13 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
 
   is_retryable_java_error <- function(msg_txt) {
     stringr::str_detect(msg_txt %||% "", "ArrayIndexOutOfBoundsException|ExecutionException")
+  }
+
+  is_no_transit_service_error <- function(msg_txt) {
+    stringr::str_detect(
+      msg_txt %||% "",
+      "There are no transit services available on the selected departure date"
+    )
   }
 
   empty_ttm_result <- function() {
@@ -400,6 +458,16 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
     ),
     error = function(e) {
       err_msg <- safe_error_message(e)
+      if (is_no_transit_service_error(err_msg)) {
+        message(
+          "No transit service on selected departure date for this chunk. Returning empty chunk output; pairs will be treated as unreachable downstream.\n",
+          "  feed_name: ", context$feed_name %||% "unknown", "\n",
+          "  analysis_date: ", as.character(context$analysis_date %||% NA_character_), "\n",
+          "  time_window_id / od_scenario_id: ", context$time_window_id %||% "unknown", " / ", context$od_scenario_id %||% "unknown", "\n",
+          "  origin_chunk_id / destination_chunk_id: ", context$origin_chunk_id %||% NA, " / ", context$destination_chunk_id %||% NA
+        )
+        return(empty_ttm_result())
+      }
       if (is_retryable_java_error(err_msg)) {
         message("travel_time_matrix failed with Java execution error. Retrying with n_threads=1 for this chunk.")
         routing_cfg_retry <- routing_cfg
@@ -415,6 +483,16 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
           ),
           error = function(e_retry) {
             retry_msg <- safe_error_message(e_retry)
+            if (is_no_transit_service_error(retry_msg)) {
+              message(
+                "No transit service on selected departure date during retry. Returning empty chunk output; pairs will be treated as unreachable downstream.\n",
+                "  feed_name: ", context$feed_name %||% "unknown", "\n",
+                "  analysis_date: ", as.character(context$analysis_date %||% NA_character_), "\n",
+                "  time_window_id / od_scenario_id: ", context$time_window_id %||% "unknown", " / ", context$od_scenario_id %||% "unknown", "\n",
+                "  origin_chunk_id / destination_chunk_id: ", context$origin_chunk_id %||% NA, " / ", context$destination_chunk_id %||% NA
+              )
+              return(empty_ttm_result())
+            }
             if (!is_retryable_java_error(retry_msg)) {
               emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
             }

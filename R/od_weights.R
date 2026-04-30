@@ -118,7 +118,15 @@ study_area_county_fips <- function(cfg) {
     county_tbl <- tigris::counties(state = state, cb = TRUE, year = cfg$analysis_area$county_outline_year, class = "sf", progress_bar = FALSE)
     row_i <- county_tbl %>% dplyr::filter(NAME == county_name) %>% dplyr::slice(1)
     if (nrow(row_i) == 0) {
-      stop(paste0("County not found in tigris lookup: ", county_name, ", ", state), call. = FALSE)
+      available_names <- county_tbl %>%
+        sf::st_drop_geometry() %>%
+        dplyr::pull(NAME) %>%
+        as.character() %>%
+        unique() %>%
+        sort()
+      guess <- available_names[stringdist::amatch(county_name, available_names, maxDist = 3)]
+      hint <- if (length(guess) > 0 && !is.na(guess[[1]])) paste0(" Did you mean `", guess[[1]], "` in state `", state, "`?") else ""
+      stop(paste0("County not found in tigris lookup: ", county_name, ", ", state, ".", hint), call. = FALSE)
     }
     as.character(row_i$GEOID[[1]])
   })

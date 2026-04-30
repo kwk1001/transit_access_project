@@ -227,16 +227,43 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
 
   missing_zone_ids <- setdiff(unique(zone_centroids_default$zone_id), unique(zone_sf$zone_id))
   if (length(missing_zone_ids) > 0) {
-    fallback <- zone_centroids_default %>%
+    fallback_base <- geography_outputs$analysis_zones %>%
       filter(zone_id %in% missing_zone_ids) %>%
+      sf::st_make_valid() %>%
+      sf::st_transform(4326)
+    fallback_pts <- suppressWarnings(sf::st_point_on_surface(sf::st_geometry(fallback_base)))
+    sf::st_geometry(fallback_base) <- fallback_pts
+
+    fallback <- fallback_base %>%
       mutate(
         lon = sf::st_coordinates(.)[, 1],
         lat = sf::st_coordinates(.)[, 2],
         n_tracts = NA_integer_,
-        point_method = "fallback_zone_point_on_surface",
+        point_method = "fallback_zone_polygon_point_on_surface",
         representative_tract_id = NA_character_
       ) %>%
       dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id)
+
+    fallback <- fallback %>%
+      filter(
+        !is.na(lon), !is.na(lat),
+        is.finite(lon), is.finite(lat),
+        lon >= -180, lon <= 180,
+        lat >= -90, lat <= 90
+      )
+
+    if (nrow(fallback) < length(missing_zone_ids)) {
+      unresolved <- setdiff(missing_zone_ids, fallback$zone_id)
+      warning(
+        paste0(
+          "Could not build valid fallback routing points for ", length(unresolved),
+          " ZIP zone(s). These zones will be excluded from routing. Example ids: ",
+          paste(head(unresolved, 50), collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
     zone_sf <- dplyr::bind_rows(zone_sf, fallback)
   }
 
@@ -271,6 +298,8 @@ choose_routing_dates <- function(cfg) {
     feed_registry = feed_registry
   )
 
+  all_dates <- filter_low_service_dates(all_dates, cfg)
+
   if (identical(cfg$routing$date_strategy, "sample_n_dates_per_period")) {
     return(sample_dates_evenly(all_dates, cfg$routing$sample_n_dates_per_period))
   }
@@ -278,15 +307,111 @@ choose_routing_dates <- function(cfg) {
   all_dates
 }
 
+parse_gtfs_service_levels <- function(gtfs_zip_path) {
+  td <- tempfile("gtfs_service_")
+  dir.create(td, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(td, recursive = TRUE, force = TRUE), add = TRUE)
+  utils::unzip(gtfs_zip_path, exdir = td)
+
+  cal_path <- file.path(td, "calendar.txt")
+  cal_dates_path <- file.path(td, "calendar_dates.txt")
+  if (!file.exists(cal_path)) return(tibble::tibble(date = as.Date(character()), n_services = integer()))
+
+  cal <- readr::read_csv(cal_path, show_col_types = FALSE, progress = FALSE)
+  if (nrow(cal) == 0) return(tibble::tibble(date = as.Date(character()), n_services = integer()))
+
+  all_days <- seq(min(as.Date(as.character(cal$start_date), "%Y%m%d")), max(as.Date(as.character(cal$end_date), "%Y%m%d")), by = "day")
+  w <- as.integer(lubridate::wday(all_days, week_start = 1))
+  out <- vector("list", nrow(cal))
+  for (i in seq_len(nrow(cal))) {
+    sd <- as.Date(as.character(cal$start_date[[i]]), "%Y%m%d")
+    ed <- as.Date(as.character(cal$end_date[[i]]), "%Y%m%d")
+    idx <- which(all_days >= sd & all_days <= ed)
+    day_seq <- all_days[idx]
+    w2 <- w[idx]
+    keep <- (w2 == 1 & cal$monday[[i]] == 1) | (w2 == 2 & cal$tuesday[[i]] == 1) | (w2 == 3 & cal$wednesday[[i]] == 1) |
+      (w2 == 4 & cal$thursday[[i]] == 1) | (w2 == 5 & cal$friday[[i]] == 1) | (w2 == 6 & cal$saturday[[i]] == 1) | (w2 == 7 & cal$sunday[[i]] == 1)
+    out[[i]] <- tibble::tibble(date = day_seq[keep], n_services = 1L)
+  }
+  svc <- dplyr::bind_rows(out) %>% dplyr::group_by(date) %>% dplyr::summarise(n_services = sum(n_services), .groups = "drop")
+
+  if (file.exists(cal_dates_path)) {
+    cd <- readr::read_csv(cal_dates_path, show_col_types = FALSE, progress = FALSE)
+    if (nrow(cd) > 0) {
+      cd <- cd %>% dplyr::transmute(date = as.Date(as.character(date), "%Y%m%d"), exception_type = as.integer(exception_type))
+      add <- cd %>% dplyr::filter(exception_type == 1) %>% dplyr::count(date, name = "n_add")
+      rem <- cd %>% dplyr::filter(exception_type == 2) %>% dplyr::count(date, name = "n_rem")
+      svc <- svc %>%
+        dplyr::full_join(add, by = "date") %>%
+        dplyr::full_join(rem, by = "date") %>%
+        dplyr::mutate(n_services = pmax(0L, dplyr::coalesce(n_services, 0L) + dplyr::coalesce(n_add, 0L) - dplyr::coalesce(n_rem, 0L))) %>%
+        dplyr::select(date, n_services)
+    }
+  }
+  svc
+}
+
+filter_low_service_dates <- function(date_tbl, cfg, min_ratio = 0.2) {
+  if (nrow(date_tbl) == 0) return(date_tbl)
+  feed_files <- cfg$gtfs_feeds %>%
+    purrr::map_dfr(~ tibble::tibble(feed_name = as.character(.x$feed_name), gtfs_path = as.character(.x$gtfs_files[[1]])))
+
+  svc_tbl <- purrr::map_dfr(seq_len(nrow(feed_files)), function(i) {
+    p <- feed_files$gtfs_path[[i]]
+    if (!file.exists(p)) return(tibble::tibble(feed_name = feed_files$feed_name[[i]], date = as.Date(character()), n_services = integer()))
+    parse_gtfs_service_levels(p) %>% dplyr::mutate(feed_name = feed_files$feed_name[[i]])
+  })
+  if (nrow(svc_tbl) == 0) return(date_tbl)
+
+  svc_tbl <- svc_tbl %>%
+    dplyr::group_by(feed_name) %>%
+    dplyr::mutate(max_services = max(n_services, na.rm = TRUE), service_ratio = dplyr::if_else(max_services > 0, n_services / max_services, 0)) %>%
+    dplyr::ungroup()
+
+  out <- date_tbl %>%
+    dplyr::left_join(svc_tbl %>% dplyr::rename(analysis_date = date), by = c("feed_name", "analysis_date")) %>%
+    dplyr::filter(is.na(service_ratio) | service_ratio >= min_ratio) %>%
+    dplyr::select(names(date_tbl))
+
+  if (nrow(out) == 0) date_tbl else out
+}
+
 make_routing_points <- function(zone_centroids_sf, zone_ids, cfg) {
   zone_ids <- standardize_zone_id(zone_ids, cfg$geography$analysis_unit)
-  zone_centroids_sf %>%
+  out <- zone_centroids_sf %>%
     mutate(zone_id = standardize_zone_id(zone_id, cfg$geography$analysis_unit)) %>%
     filter(zone_id %in% zone_ids) %>%
     sf::st_transform(4326) %>%
     mutate(lon = sf::st_coordinates(.)[, 1], lat = sf::st_coordinates(.)[, 2]) %>%
     sf::st_drop_geometry() %>%
-    transmute(id = as.character(zone_id), lon = lon, lat = lat)
+    transmute(id = as.character(zone_id), lon = as.numeric(lon), lat = as.numeric(lat))
+
+  out_valid_rows <- out %>%
+    filter(
+      !is.na(id),
+      !is.na(lon), !is.na(lat),
+      is.finite(lon), is.finite(lat),
+      lon >= -180, lon <= 180,
+      lat >= -90, lat <= 90
+    )
+
+  out_valid <- out_valid_rows %>% distinct(id, .keep_all = TRUE)
+
+  dropped_ids <- out %>%
+    distinct(id) %>%
+    anti_join(out_valid %>% distinct(id), by = "id")
+  if (nrow(dropped_ids) > 0) {
+    dropped_ids_txt <- paste(head(dropped_ids$id, 50), collapse = ", ")
+    warning(
+      paste0(
+        "Dropped ", nrow(dropped_ids),
+        " invalid routing points (bad lon/lat). Example ids: ", dropped_ids_txt
+      ),
+      call. = FALSE
+    )
+  }
+
+  out_valid
 }
 
 compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departure_datetime, routing_cfg, window_minutes, progress = TRUE) {
@@ -308,6 +433,13 @@ compute_ttm_one_chunk <- function(network, origins_df, destinations_df, departur
     mutate(
       from_id = as.character(from_id),
       to_id = as.character(to_id)
+    ) %>%
+    {
+      tt_cols <- names(.)[stringr::str_detect(names(.), "^travel_time_p[0-9]+$")]
+      if (length(tt_cols) > 0) {
+        . <- . %>% mutate(across(all_of(tt_cols), ~ suppressWarnings(as.numeric(.x))))
+      }
+      .
     )
 }
 
@@ -325,6 +457,13 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
 
   is_retryable_java_error <- function(msg_txt) {
     stringr::str_detect(msg_txt %||% "", "ArrayIndexOutOfBoundsException|ExecutionException")
+  }
+
+  is_no_transit_service_error <- function(msg_txt) {
+    stringr::str_detect(
+      msg_txt %||% "",
+      "There are no transit services available on the selected departure date"
+    )
   }
 
   empty_ttm_result <- function() {
@@ -400,6 +539,16 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
     ),
     error = function(e) {
       err_msg <- safe_error_message(e)
+      if (is_no_transit_service_error(err_msg)) {
+        message(
+          "No transit service on selected departure date for this chunk. Returning empty chunk output; pairs will be treated as unreachable downstream.\n",
+          "  feed_name: ", context$feed_name %||% "unknown", "\n",
+          "  analysis_date: ", as.character(context$analysis_date %||% NA_character_), "\n",
+          "  time_window_id / od_scenario_id: ", context$time_window_id %||% "unknown", " / ", context$od_scenario_id %||% "unknown", "\n",
+          "  origin_chunk_id / destination_chunk_id: ", context$origin_chunk_id %||% NA, " / ", context$destination_chunk_id %||% NA
+        )
+        return(empty_ttm_result())
+      }
       if (is_retryable_java_error(err_msg)) {
         message("travel_time_matrix failed with Java execution error. Retrying with n_threads=1 for this chunk.")
         routing_cfg_retry <- routing_cfg
@@ -415,6 +564,16 @@ compute_ttm_one_chunk_with_retry <- function(network, origins_df, destinations_d
           ),
           error = function(e_retry) {
             retry_msg <- safe_error_message(e_retry)
+            if (is_no_transit_service_error(retry_msg)) {
+              message(
+                "No transit service on selected departure date during retry. Returning empty chunk output; pairs will be treated as unreachable downstream.\n",
+                "  feed_name: ", context$feed_name %||% "unknown", "\n",
+                "  analysis_date: ", as.character(context$analysis_date %||% NA_character_), "\n",
+                "  time_window_id / od_scenario_id: ", context$time_window_id %||% "unknown", " / ", context$od_scenario_id %||% "unknown", "\n",
+                "  origin_chunk_id / destination_chunk_id: ", context$origin_chunk_id %||% NA, " / ", context$destination_chunk_id %||% NA
+              )
+              return(empty_ttm_result())
+            }
             if (!is_retryable_java_error(retry_msg)) {
               emit_routing_failure(initial_msg = err_msg, retry_msg = retry_msg, retry_attempted = TRUE)
             }

@@ -1,4 +1,5 @@
 download_osm_pbf_if_needed <- function(cfg) {
+  validate_osm_coverage_config(cfg)
   fs::dir_create(dirname(cfg$osm$local_pbf_path))
 
   if (file_is_nonempty(cfg$osm$local_pbf_path, min_bytes = 1024 * 1024)) {
@@ -19,6 +20,32 @@ download_osm_pbf_if_needed <- function(cfg) {
   }
 
   invisible(cfg$osm$local_pbf_path)
+}
+
+validate_osm_coverage_config <- function(cfg) {
+  counties <- cfg$analysis_area$counties %||% list()
+  states <- counties %>%
+    purrr::map_chr(~ toupper(as.character(.x$state %||% ""))) %>%
+    unique()
+  states <- states[nzchar(states)]
+
+  osm_refs <- tolower(paste(cfg$osm$download_url %||% "", cfg$osm$local_pbf_path %||% ""))
+  appears_single_state_pbf <- stringr::str_detect(osm_refs, "massachusetts-latest\\.osm\\.pbf")
+  includes_new_hampshire <- "NH" %in% states
+
+  if (appears_single_state_pbf && includes_new_hampshire) {
+    stop(
+      paste0(
+        "OSM PBF appears to be Massachusetts-only, but analysis counties include NH. ",
+        "This can cause widespread routing failures for NH tracts. ",
+        "Use a PBF that covers both states (or remove NH counties). ",
+        "Current OSM source: ", cfg$osm$download_url
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
 }
 
 lookup_county_fips_exact <- function(state, county_name, year) {

@@ -203,30 +203,24 @@ apply_trip_filters <- function(trips_df, scenario, cfg) {
         destination_tract = dplyr::coalesce(destination_zone, destination_tract)
       )
   } else {
-    missing_origin <- out %>% dplyr::filter(is.na(origin_zone)) %>% dplyr::distinct(origin_tract)
-    missing_destination <- out %>% dplyr::filter(is.na(destination_zone)) %>% dplyr::distinct(destination_tract)
-    missing_pairs <- out %>% dplyr::filter(is.na(origin_zone) | is.na(destination_zone))
-
-    if (nrow(missing_pairs) > 0) {
-      origin_examples <- paste(utils::head(missing_origin$origin_tract, 10), collapse = ", ")
-      destination_examples <- paste(utils::head(missing_destination$destination_tract, 10), collapse = ", ")
+    dropped_before <- nrow(out)
+    out <- out %>%
+      filter(!is.na(origin_zone), !is.na(destination_zone)) %>%
+      mutate(
+        origin_tract = origin_zone,
+        destination_tract = destination_zone
+      )
+    dropped_n <- dropped_before - nrow(out)
+    if (dropped_n > 0) {
       warning(
         paste0(
-          "Dropped ", nrow(missing_pairs), " trip record(s) because tract-to-zone assignment failed for analysis unit `",
-          analysis_unit_use,
-          "`. Example origin tracts: ", origin_examples,
-          "; example destination tracts: ", destination_examples
+          "Dropped ", dropped_n,
+          " trip row(s) because tract-to-", analysis_unit_use,
+          " assignment was missing. This prevents tract ids from leaking into non-tract OD tables."
         ),
         call. = FALSE
       )
     }
-
-    out <- out %>%
-      mutate(
-        origin_tract = origin_zone,
-        destination_tract = destination_zone
-      ) %>%
-      dplyr::filter(!is.na(origin_tract), !is.na(destination_tract))
   }
 
   out <- out %>%
@@ -312,9 +306,6 @@ build_one_od_scenario <- function(trips_df, scenario, cfg) {
       source_id = cfg$active_survey_source_id
     )
 
-  assert_valid_zone_ids(od$origin_id, cfg$geography$analysis_unit, label = "origin ids in OD table")
-  assert_valid_zone_ids(od$destination_id, cfg$geography$analysis_unit, label = "destination ids in OD table")
-
   od <- prune_od_table(od, cfg)
   od <- apply_auxiliary_od_multipliers(od, cfg)
 
@@ -365,7 +356,7 @@ build_all_od_weights <- function(cfg) {
 }
 
 read_od_weights <- function(cfg) {
-  out <- read_csv_guess(file.path(cfg$paths$od_dir, "od_weights_all.csv.gz")) %>%
+  read_csv_guess(file.path(cfg$paths$od_dir, "od_weights_all.csv.gz")) %>%
     mutate(
       origin_id = standardize_zone_id(origin_id, cfg$geography$analysis_unit),
       destination_id = standardize_zone_id(destination_id, cfg$geography$analysis_unit)
@@ -374,9 +365,4 @@ read_od_weights <- function(cfg) {
       scenario_id = as.character(scenario_id),
       time_bin = as.character(time_bin)
     )
-
-  assert_valid_zone_ids(out$origin_id, cfg$geography$analysis_unit, label = "origin ids read from cached OD weights")
-  assert_valid_zone_ids(out$destination_id, cfg$geography$analysis_unit, label = "destination ids read from cached OD weights")
-
-  out
 }

@@ -34,7 +34,7 @@ validate_osm_coverage_config <- function(cfg) {
   includes_new_hampshire <- "NH" %in% states
 
   if (appears_single_state_pbf && includes_new_hampshire) {
-    stop(
+    warning(
       paste0(
         "OSM PBF appears to be Massachusetts-only, but analysis counties include NH. ",
         "This can cause widespread routing failures for NH tracts. ",

@@ -227,16 +227,40 @@ build_zone_centroids_for_routing <- function(geography_outputs, cfg) {
 
   missing_zone_ids <- setdiff(unique(zone_centroids_default$zone_id), unique(zone_sf$zone_id))
   if (length(missing_zone_ids) > 0) {
-    fallback <- zone_centroids_default %>%
+    fallback <- geography_outputs$analysis_zones %>%
       filter(zone_id %in% missing_zone_ids) %>%
+      sf::st_make_valid() %>%
+      suppressWarnings(sf::st_point_on_surface(.)) %>%
+      sf::st_transform(4326) %>%
       mutate(
         lon = sf::st_coordinates(.)[, 1],
         lat = sf::st_coordinates(.)[, 2],
         n_tracts = NA_integer_,
-        point_method = "fallback_zone_point_on_surface",
+        point_method = "fallback_zone_polygon_point_on_surface",
         representative_tract_id = NA_character_
       ) %>%
       dplyr::select(zone_id, lon, lat, n_tracts, point_method, representative_tract_id)
+
+    fallback <- fallback %>%
+      filter(
+        !is.na(lon), !is.na(lat),
+        is.finite(lon), is.finite(lat),
+        lon >= -180, lon <= 180,
+        lat >= -90, lat <= 90
+      )
+
+    if (nrow(fallback) < length(missing_zone_ids)) {
+      unresolved <- setdiff(missing_zone_ids, fallback$zone_id)
+      warning(
+        paste0(
+          "Could not build valid fallback routing points for ", length(unresolved),
+          " ZIP zone(s). These zones will be excluded from routing. Example ids: ",
+          paste(head(unresolved, 50), collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+
     zone_sf <- dplyr::bind_rows(zone_sf, fallback)
   }
 

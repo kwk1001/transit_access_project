@@ -1,4 +1,6 @@
 data/
 logs/
 outputs/
+py/
+mbta_merged_output/
 .DS_Store

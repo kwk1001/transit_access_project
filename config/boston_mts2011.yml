@@ -52,26 +52,27 @@ spatial:
     raw_trip_destination_col: null
 
 osm:
-  download_url: https://download.geofabrik.de/north-america/us/northeast-latest.osm.pbf
-  local_pbf_path: data/raw/osm/boston/us-northeast-latest.osm.pbf
+  download_url: https://download.geofabrik.de/north-america/us/massachusetts-latest.osm.pbf
+  local_pbf_path: data/raw/osm/boston/massachusetts-latest.osm.pbf
 
 study_periods:
   - period_id: P1
-    period_label: 2025-08-18_to_2025-09-15
-    period_start: 2025-08-18
-    period_end_exclusive: 2025-09-15
+    period_label: 2025-08-04_to_2025-08-25
+    period_start: 2025-08-04
+    period_end_exclusive: 2025-08-25
   - period_id: P2
-    period_label: 2025-09-15_to_2025-10-20
-    period_start: 2025-09-15
-    period_end_exclusive: 2025-10-20
+    period_label: 2025-08-25_to_2025-09-08
+    period_start: 2025-08-25
+    period_end_exclusive: 2025-09-08
   - period_id: P3
-    period_label: 2025-10-20_to_2025-12-13
-    period_start: 2025-10-20
-    period_end_exclusive: 2025-12-13
+    period_label: 2025-09-08_to_2025-09-29
+    period_start: 2025-09-08
+    period_end_exclusive: 2025-09-29
 
 analysis_calendar:
   weekday_only: true
-  excluded_dates: []
+  excluded_dates:
+    - 2025-09-01
 
 od_scenarios:
   - scenario_id: peak
@@ -84,8 +85,8 @@ od_scenarios:
     exclude_same_zone: true
     time_bin_rules:
       - time_bin: peak
-        start_time: 07:00:00
-        end_time: 09:00:00
+        start_time: 07:30:00
+        end_time: 09:30:00
   - scenario_id: midday
     scenario_label: Midday, all purposes
     weekday_only: true
@@ -108,9 +109,9 @@ auxiliary_weights:
   destination_multiplier_col: multiplier
 
 r5r_network:
-  java_memory: 12G
+  java_memory: 16G
   overwrite_networks: true
-  java_active_processors: 4
+  java_active_processors: 6
 
 routing:
   modes:
@@ -125,17 +126,17 @@ routing:
     - 50
   service_area_buffer_m: 2000
   restrict_to_service_area: true
-  origin_chunk_size: 30
+  origin_chunk_size: 50
   date_strategy: sample_n_dates_per_period
   sample_n_dates_per_period: 3
-  n_threads: 1
+  n_threads: 6
   unreachable_penalty_minutes: 180
   routing_windows:
     - time_window_id: peak
       time_window_label: Peak
       od_scenario_id: peak
-      start_time: 07:00:00
-      end_time: 09:00:00
+      start_time: 07:30:00
+      end_time: 09:30:00
     - time_window_id: midday
       time_window_label: Midday
       od_scenario_id: midday
@@ -159,11 +160,11 @@ map:
     - share_accessible_45min_weighted
 
 gtfs_feeds:
-  - feed_name: MBTA_0825
-    valid_start: 2025-08-18
-    valid_end_exclusive: 2025-12-14
+  - feed_name: MBTA_Merged
+    valid_start: 2025-08-04
+    valid_end_exclusive: 2025-09-28
     gtfs_files:
-      - data/raw/gtfs/boston/MBTA-08-25.zip
+      - data/raw/gtfs/boston/MBTA-Merged-0805-0928.zip
 
 optional_covariates:
   download_population: false

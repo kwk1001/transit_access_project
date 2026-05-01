@@ -566,20 +566,53 @@ build_gtfs_variant_by_route_ids <- function(gtfs_zip_path, variant_label, keep_r
   )
 }
 
+
+resolve_base_network_osm_pbf <- function(cfg, base_feed_name) {
+  candidates <- character()
+  if (!is.null(cfg$paths$network_dir) && nzchar(cfg$paths$network_dir)) {
+    candidates <- c(candidates, file.path(cfg$paths$network_dir, base_feed_name, "input"))
+  }
+  if (!is.null(cfg$project$city_id) && nzchar(cfg$project$city_id) && !is.null(cfg$paths$project_root) && nzchar(cfg$paths$project_root)) {
+    candidates <- c(candidates, file.path(cfg$paths$project_root, "data", "processed", cfg$project$city_id, "networks", base_feed_name, "input"))
+  }
+  candidates <- unique(candidates[file.exists(candidates)])
+  osm_files <- character()
+  for (d in candidates) {
+    osm_files <- c(osm_files, fs::dir_ls(d, glob = "*.osm.pbf", recurse = FALSE))
+  }
+  osm_files <- unique(osm_files[file.exists(osm_files)])
+  if (length(osm_files) > 0) {
+    info <- file.info(osm_files)
+    if (nrow(info) > 0) {
+      osm_files <- rownames(info)[order(info$size, decreasing = FALSE)]
+    }
+    return(normalizePath(osm_files[[1]], winslash = "/", mustWork = TRUE))
+  }
+  cfg_osm <- cfg$osm$local_pbf_path %||% NA_character_
+  if (!is.na(cfg_osm) && nzchar(cfg_osm)) {
+    if (!grepl("^(~|/|[A-Za-z]:)", cfg_osm)) cfg_osm <- file.path(cfg$paths$project_root, cfg_osm)
+    if (file.exists(cfg_osm)) return(normalizePath(cfg_osm, winslash = "/", mustWork = TRUE))
+  }
+  NA_character_
+}
+
 run_rail_route_isolation <- function(cfg, context, base_gtfs_path, out_dir, pair_manifest, departure_datetime, time_window_minutes, rail_route_id_arg = NULL) {
   inventory_detailed <- inspect_gtfs_routes_detailed(base_gtfs_path)
   rail_inventory <- inventory_detailed %>% dplyr::filter(route_type_num == 2L)
   if (!is.null(rail_route_id_arg)) rail_inventory <- rail_inventory %>% dplyr::filter(route_id == rail_route_id_arg)
+  empty_out <- list(inventory = rail_inventory, build_summary = tibble::tibble(), matrix_summary = tibble::tibble(), pair_hits = tibble::tibble(), report_candidates = tibble::tibble(), search_trace = tibble::tibble())
   if (nrow(rail_inventory) == 0) {
     readr::write_csv(rail_inventory, file.path(out_dir, "rail_route_isolation_inventory.csv"))
     readr::write_csv(tibble::tibble(), file.path(out_dir, "rail_route_isolation_build_summary.csv"))
     readr::write_csv(tibble::tibble(), file.path(out_dir, "rail_route_isolation_matrix_summary.csv"))
     readr::write_csv(tibble::tibble(), file.path(out_dir, "rail_route_isolation_requested_pair_hits.csv"))
-    return(list(inventory = rail_inventory, build_summary = tibble::tibble(), matrix_summary = tibble::tibble(), pair_hits = tibble::tibble(), report_candidates = tibble::tibble()))
+    readr::write_csv(tibble::tibble(), file.path(out_dir, "rail_route_isolation_search_trace.csv"))
+    readr::write_csv(tibble::tibble(), file.path(out_dir, "rail_route_isolation_culprit_candidates.csv"))
+    return(empty_out)
   }
 
-  rail_pairs <- pair_manifest %>% dplyr::filter(origin_id != destination_id) %>% dplyr::slice_head(n = 4)
-  if (nrow(rail_pairs) == 0) rail_pairs <- pair_manifest %>% dplyr::slice_head(n = min(2L, nrow(pair_manifest)))
+  rail_pairs <- pair_manifest %>% dplyr::filter(origin_id != destination_id) %>% dplyr::slice_head(n = 2)
+  if (nrow(rail_pairs) == 0) rail_pairs <- pair_manifest %>% dplyr::slice_head(n = min(1L, nrow(pair_manifest)))
   readr::write_csv(rail_pairs, file.path(out_dir, "rail_isolation_pair_manifest.csv"))
   origins_small <- build_point_df(unique(rail_pairs$origin_id), qc_tbl, cfg)
   destinations_small <- build_point_df(unique(rail_pairs$destination_id), qc_tbl, cfg)
@@ -590,77 +623,128 @@ run_rail_route_isolation <- function(cfg, context, base_gtfs_path, out_dir, pair
   matrix_summary <- tibble::tibble()
   pair_hits <- tibble::tibble()
   raw_all <- tibble::tibble()
+  search_trace <- tibble::tibble()
+  culprit_candidates <- character()
 
-  for (i in seq_len(nrow(rail_inventory))) {
-    rr <- rail_inventory[i, ]
-    safe_id <- gsub("[^A-Za-z0-9]+", "_", rr$route_id[[1]])
-    variant_label <- paste0("rail_route_", safe_id)
-    build <- build_gtfs_variant_by_route_ids(base_gtfs_path, variant_label, keep_route_ids = rr$route_id[[1]], keep_fixed_route_types = c(0L, 1L, 3L), out_dir = out_dir)
+  eval_subset <- function(route_ids, label, depth) {
+    routes_sub <- rail_inventory %>% dplyr::filter(route_id %in% route_ids)
+    safe_id <- gsub("[^A-Za-z0-9]+", "_", label)
+    variant_label <- paste0("rail_subset_", safe_id)
+    build <- build_gtfs_variant_by_route_ids(base_gtfs_path, variant_label, keep_route_ids = route_ids, keep_fixed_route_types = c(0L, 1L, 3L), out_dir = out_dir)
     build <- tibble::as_tibble(build) %>%
-      dplyr::mutate(route_id = rr$route_id[[1]], route_short_name = rr$route_short_name[[1]], route_long_name = rr$route_long_name[[1]], n_route_trips = rr$n_trips[[1]], n_route_stop_times = rr$n_stop_times[[1]])
-    build_summary <- dplyr::bind_rows(build_summary, build)
+      dplyr::mutate(
+        subset_label = label,
+        depth = depth,
+        n_subset_routes = length(route_ids),
+        route_ids = paste(sort(route_ids), collapse = ";"),
+        route_short_names = paste(sort(unique(routes_sub$route_short_name)), collapse = ";"),
+        route_long_names = paste(sort(unique(routes_sub$route_long_name)), collapse = ";")
+      )
+    build_summary <<- dplyr::bind_rows(build_summary, build)
 
     if (!identical(build$status[[1]], "ok") || is.na(build$zip_path[[1]]) || !file.exists(build$zip_path[[1]])) {
-      matrix_summary <- dplyr::bind_rows(matrix_summary, tibble::tibble(
-        variant_label = variant_label, route_id = rr$route_id[[1]], route_short_name = rr$route_short_name[[1]], route_long_name = rr$route_long_name[[1]],
+      row <- tibble::tibble(
+        variant_label = variant_label, subset_label = label, depth = depth, n_subset_routes = length(route_ids),
+        route_ids = paste(sort(route_ids), collapse = ";"), route_short_names = paste(sort(unique(routes_sub$route_short_name)), collapse = ";"), route_long_names = paste(sort(unique(routes_sub$route_long_name)), collapse = ";"),
         status = as.character(build$status[[1]]), error_message = NA_character_, n_rows_returned = 0L, n_exact_requested_pairs_hit = 0L,
         n_self_pairs_returned = 0L, n_unique_from = 0L, n_unique_to = 0L
-      ))
-      next
+      )
+      matrix_summary <<- dplyr::bind_rows(matrix_summary, row)
+      search_trace <<- dplyr::bind_rows(search_trace, row %>% dplyr::mutate(crash_flag = TRUE, weak_success_flag = FALSE))
+      return(list(status = "build_error", row = row))
     }
 
     variant_feed_name <- paste0(context$feed_name, "__", variant_label)
-    net_probe <- safe_run(build_r5_network_object(cfg, variant_feed_name, list(build$zip_path[[1]])))
+    cfg_variant <- cfg
+    cfg_variant$osm$local_pbf_path <- resolve_base_network_osm_pbf(cfg, context$feed_name)
+    net_probe <- safe_run(build_r5_network_object(cfg_variant, variant_feed_name, list(build$zip_path[[1]])))
     if (!identical(net_probe$status, "ok") || is.null(net_probe$result)) {
-      matrix_summary <- dplyr::bind_rows(matrix_summary, tibble::tibble(
-        variant_label = variant_label, route_id = rr$route_id[[1]], route_short_name = rr$route_short_name[[1]], route_long_name = rr$route_long_name[[1]],
+      row <- tibble::tibble(
+        variant_label = variant_label, subset_label = label, depth = depth, n_subset_routes = length(route_ids),
+        route_ids = paste(sort(route_ids), collapse = ";"), route_short_names = paste(sort(unique(routes_sub$route_short_name)), collapse = ";"), route_long_names = paste(sort(unique(routes_sub$route_long_name)), collapse = ";"),
         status = "network_error", error_message = net_probe$error_message, n_rows_returned = 0L, n_exact_requested_pairs_hit = 0L,
         n_self_pairs_returned = 0L, n_unique_from = 0L, n_unique_to = 0L
-      ))
-      next
+      )
+      matrix_summary <<- dplyr::bind_rows(matrix_summary, row)
+      search_trace <<- dplyr::bind_rows(search_trace, row %>% dplyr::mutate(crash_flag = TRUE, weak_success_flag = FALSE))
+      return(list(status = "network_error", row = row))
     }
 
     variant_network <- net_probe$result
     probe <- safe_run(run_ttm_direct(variant_network, origins_small, destinations_small, c("WALK", "TRANSIT"), departure_datetime, time_window_minutes, cfg, n_threads = 1L))
     raw <- if (identical(probe$status, "ok")) normalize_raw_ttm(probe$result, cfg) else tibble::tibble()
-    if (nrow(raw) > 0) raw <- raw %>% dplyr::mutate(variant_label = variant_label, route_id = rr$route_id[[1]])
-    raw_all <- dplyr::bind_rows(raw_all, raw)
+    if (nrow(raw) > 0) raw <- raw %>% dplyr::mutate(variant_label = variant_label, subset_label = label, route_ids = paste(sort(route_ids), collapse = ";"))
+    raw_all <<- dplyr::bind_rows(raw_all, raw)
 
-    matrix_summary <- dplyr::bind_rows(matrix_summary, tibble::tibble(
-      variant_label = variant_label, route_id = rr$route_id[[1]], route_short_name = rr$route_short_name[[1]], route_long_name = rr$route_long_name[[1]],
+    row <- tibble::tibble(
+      variant_label = variant_label, subset_label = label, depth = depth, n_subset_routes = length(route_ids),
+      route_ids = paste(sort(route_ids), collapse = ";"), route_short_names = paste(sort(unique(routes_sub$route_short_name)), collapse = ";"), route_long_names = paste(sort(unique(routes_sub$route_long_name)), collapse = ";"),
       status = probe$status, error_message = probe$error_message, n_rows_returned = nrow(raw),
       n_exact_requested_pairs_hit = if (nrow(raw) > 0) sum(paste0(raw$from_id, "__", raw$to_id) %in% requested_small$pair_id) else 0L,
       n_self_pairs_returned = if (nrow(raw) > 0) sum(raw$from_id == raw$to_id, na.rm = TRUE) else 0L,
       n_unique_from = if (nrow(raw) > 0) dplyr::n_distinct(raw$from_id) else 0L,
       n_unique_to = if (nrow(raw) > 0) dplyr::n_distinct(raw$to_id) else 0L
-    ))
+    )
+    matrix_summary <<- dplyr::bind_rows(matrix_summary, row)
 
     if (nrow(raw) > 0) {
       hits <- requested_small %>%
         dplyr::left_join(raw %>% dplyr::mutate(pair_id = paste0(from_id, "__", to_id)) %>% dplyr::group_by(pair_id) %>% dplyr::summarise(raw_rows_for_pair = dplyr::n(), .groups = "drop"), by = "pair_id") %>%
-        dplyr::mutate(variant_label = variant_label, route_id = rr$route_id[[1]], exact_pair_hit = !is.na(raw_rows_for_pair) & raw_rows_for_pair > 0L)
+        dplyr::mutate(variant_label = variant_label, subset_label = label, route_ids = paste(sort(route_ids), collapse = ";"), exact_pair_hit = !is.na(raw_rows_for_pair) & raw_rows_for_pair > 0L)
     } else {
-      hits <- requested_small %>% dplyr::mutate(variant_label = variant_label, route_id = rr$route_id[[1]], raw_rows_for_pair = 0L, exact_pair_hit = FALSE)
+      hits <- requested_small %>% dplyr::mutate(variant_label = variant_label, subset_label = label, route_ids = paste(sort(route_ids), collapse = ";"), raw_rows_for_pair = 0L, exact_pair_hit = FALSE)
     }
-    pair_hits <- dplyr::bind_rows(pair_hits, hits)
+    pair_hits <<- dplyr::bind_rows(pair_hits, hits)
     try(r5r::stop_r5(variant_network), silent = TRUE)
+
+    crash_flag <- probe$status != "ok" || grepl("ArrayIndexOutOfBoundsException", dplyr::coalesce(probe$error_message, ""), fixed = TRUE)
+    weak_success_flag <- identical(probe$status, "ok") && (row$n_exact_requested_pairs_hit[[1]] == 0L)
+    search_trace <<- dplyr::bind_rows(search_trace, row %>% dplyr::mutate(crash_flag = crash_flag, weak_success_flag = weak_success_flag))
+    list(status = if (crash_flag) "crash" else if (weak_success_flag) "weak_success" else "ok", row = row)
   }
+
+  recurse <- function(route_ids, label, depth = 0L) {
+    res <- eval_subset(route_ids, label, depth)
+    if (!(res$status %in% c("crash", "weak_success"))) return(invisible(NULL))
+    if (length(route_ids) <= 1L) {
+      culprit_candidates <<- unique(c(culprit_candidates, route_ids))
+      return(invisible(NULL))
+    }
+    split_idx <- ceiling(length(route_ids) / 2)
+    left <- route_ids[seq_len(split_idx)]
+    right <- route_ids[(split_idx + 1L):length(route_ids)]
+    recurse(left, paste0(label, "__L"), depth + 1L)
+    if (length(right) > 0) recurse(right, paste0(label, "__R"), depth + 1L)
+    invisible(NULL)
+  }
+
+  all_route_ids <- rail_inventory$route_id
+  recurse(all_route_ids, ifelse(length(all_route_ids) == 1L, paste0("single_", all_route_ids[[1]]), "all_rail_routes"), 0L)
 
   readr::write_csv(build_summary, file.path(out_dir, "rail_route_isolation_build_summary.csv"))
   readr::write_csv(matrix_summary, file.path(out_dir, "rail_route_isolation_matrix_summary.csv"))
   readr::write_csv(raw_all, file.path(out_dir, "rail_route_isolation_matrix_raw.csv"))
   readr::write_csv(pair_hits, file.path(out_dir, "rail_route_isolation_requested_pair_hits.csv"))
+  readr::write_csv(search_trace, file.path(out_dir, "rail_route_isolation_search_trace.csv"))
 
-  culprit_tbl <- matrix_summary %>%
+  weak_routes <- character()
+  if (nrow(search_trace) > 0 && "weak_success_flag" %in% names(search_trace) && "route_ids" %in% names(search_trace)) {
+    weak_routes <- search_trace %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of("weak_success_flag"), isTRUE), n_subset_routes == 1L) %>%
+      dplyr::pull(route_ids) %>%
+      as.character() %>%
+      unique()
+  }
+
+  culprit_tbl <- rail_inventory %>%
     dplyr::mutate(
-      culprit_flag = status != "ok" | grepl("ArrayIndexOutOfBoundsException", dplyr::coalesce(error_message, ""), fixed = TRUE),
-      weak_success_flag = status == "ok" & n_exact_requested_pairs_hit == 0L
+      culprit_flag = route_id %in% culprit_candidates,
+      weak_success_flag = route_id %in% weak_routes
     ) %>%
     dplyr::arrange(dplyr::desc(culprit_flag), dplyr::desc(weak_success_flag), route_short_name, route_long_name, route_id)
-
   readr::write_csv(culprit_tbl, file.path(out_dir, "rail_route_isolation_culprit_candidates.csv"))
 
-  list(inventory = rail_inventory, build_summary = build_summary, matrix_summary = matrix_summary, pair_hits = pair_hits, report_candidates = culprit_tbl)
+  list(inventory = rail_inventory, build_summary = build_summary, matrix_summary = matrix_summary, pair_hits = pair_hits, report_candidates = culprit_tbl, search_trace = search_trace)
 }
 
 write_probe_report <- function(out_dir, context, matrix_summary, variant_outputs, rail_outputs) {
@@ -674,7 +758,8 @@ write_probe_report <- function(out_dir, context, matrix_summary, variant_outputs
     "## Core findings",
     "",
     "- Direct and wrapper probe results are summarized below.",
-    "- Same-network mode probes use a 15-minute probe window.",
+    "- Same-network mode probes use a 15-minute probe window.
+- Rail isolation uses a 1-minute probe window and a binary-split search over commuter rail routes to reduce runtime.",
     "- Rail isolation builds one GTFS variant per commuter rail route, keeping BUS/TRAM/SUBWAY plus that single rail route.",
     "",
     "## Matrix probe summary",
@@ -694,7 +779,12 @@ write_probe_report <- function(out_dir, context, matrix_summary, variant_outputs
     ""
   )
   if (nrow(rail_outputs$report_candidates) > 0) {
-    culprit_lines <- rail_outputs$report_candidates %>% dplyr::filter(culprit_flag | weak_success_flag)
+    culprit_lines <- rail_outputs$report_candidates
+    if ("weak_success_flag" %in% names(culprit_lines)) {
+      culprit_lines <- culprit_lines %>% dplyr::filter(culprit_flag | weak_success_flag)
+    } else {
+      culprit_lines <- culprit_lines %>% dplyr::filter(culprit_flag)
+    }
     lines <- c(lines, "## Likely culprit rail routes", "```", capture.output(print(culprit_lines)), "```", "")
   }
   lines <- c(lines, "## Files", sprintf("- %s", sort(list.files(out_dir))), "")
@@ -711,13 +801,9 @@ run_same_network_mode_variants <- function(cfg, context, base_gtfs_path, out_dir
 
   urban_modes <- c("WALK", "BUS", "TRAM", "SUBWAY")
   mode_specs <- tibble::tibble(
-    variant_label = c("walk_only", "bus_only", "tram_only", "subway_only", "bus_plus_subway", "urban_transit"),
+    variant_label = c("walk_only", "urban_transit"),
     mode_vec = list(
       c("WALK"),
-      c("WALK", "BUS"),
-      c("WALK", "TRAM"),
-      c("WALK", "SUBWAY"),
-      c("WALK", "BUS", "SUBWAY"),
       urban_modes
     )
   )
@@ -832,6 +918,7 @@ if (nrow(win_row) == 0) stop(paste0("Could not find routing window ", context$ti
 departure_datetime <- combine_date_time(context$analysis_date, win_row$start_time[[1]], cfg$project$timezone)
 configured_time_window_minutes <- window_minutes(win_row$start_time[[1]], win_row$end_time[[1]])
 time_window_minutes <- as.integer(min(15L, configured_time_window_minutes))
+rail_isolation_time_window_minutes <- 1L
 write_json_pretty(list(
   departure_datetime = as.character(departure_datetime),
   configured_time_window_minutes = as.integer(configured_time_window_minutes),
@@ -1012,7 +1099,7 @@ rail_outputs <- run_rail_route_isolation(
   out_dir = out_dir,
   pair_manifest = pair_manifest,
   departure_datetime = departure_datetime,
-  time_window_minutes = time_window_minutes,
+  time_window_minutes = rail_isolation_time_window_minutes,
   rail_route_id_arg = rail_route_id_arg
 )
 
@@ -1031,6 +1118,7 @@ summary_payload <- list(
   variant_matrix_summary = variant_outputs$matrix_summary,
   variant_build_summary = variant_outputs$build_summary,
   rail_route_isolation_summary = rail_outputs$matrix_summary,
+  rail_route_isolation_search_trace = rail_outputs$search_trace,
   single_summary_status_counts = single_summary %>% dplyr::count(runner, mode_label, status),
   files = list.files(out_dir)
 )
